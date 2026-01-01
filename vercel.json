@@ -4,9 +4,6 @@
   "buildCommand": "npm run build",
   "outputDirectory": ".next",
   "installCommand": "npm install",
-  "env": {
-    "ANTHROPIC_API_KEY": "@anthropic-api-key"
-  },
   "headers": [
     {
       "source": "/(.*)",
