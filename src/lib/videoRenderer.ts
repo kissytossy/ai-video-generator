@@ -30,8 +30,11 @@ export function drawImageWithMotion(
   motion: { type: string; intensity: number },
   easing: keyof typeof easings = 'ease-out'
 ) {
-  const easedProgress = easings[easing](progress)
-  const intensity = motion.intensity || 0.1
+  // progressを0-1の範囲に制限
+  const clampedProgress = Math.max(0, Math.min(1, progress))
+  const easedProgress = easings[easing](clampedProgress)
+  // intensityを0.05-0.15の範囲に制限（自然なズーム/パン）
+  const intensity = Math.max(0.05, Math.min(0.15, motion.intensity || 0.1))
 
   // 画像のアスペクト比を維持しながらカバー
   const imgAspect = img.width / img.height
@@ -361,7 +364,8 @@ export class VideoGenerator {
 
     // フレームを生成してFFmpegに書き込み
     for (let frame = 0; frame < totalFrames; frame++) {
-      const currentTime = startTime + (frame / fps)
+      // 編集計画は0秒から始まるので、フレーム位置のみで計算
+      const currentTime = frame / fps
       
       // フレームを描画
       ctx.fillStyle = '#000'
