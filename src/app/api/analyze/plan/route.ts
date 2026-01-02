@@ -139,28 +139,33 @@ JSONのみを出力してください。説明は不要です。`
         editingPlan = JSON.parse(jsonMatch[0])
         
         // クリップ数と画像インデックスを検証・修正
-        if (editingPlan.clips) {
+        if (editingPlan.clips && editingPlan.clips.length > 0) {
           // imageIndexが範囲外の場合は修正
           editingPlan.clips = editingPlan.clips.map((clip, i) => ({
             ...clip,
-            imageIndex: Math.min(clip.imageIndex, imageCount - 1)
+            imageIndex: Math.min(Math.max(0, clip.imageIndex), imageCount - 1)
           }))
           
-          // 時間を正規化（duration内に収める）
+          // 時間を正規化（常にduration内に収める）
           const lastClip = editingPlan.clips[editingPlan.clips.length - 1]
-          if (lastClip && lastClip.endTime !== duration) {
-            const scale = duration / lastClip.endTime
+          const totalTime = lastClip.endTime
+          
+          // 時間をスケーリング
+          if (totalTime > 0 && Math.abs(totalTime - duration) > 0.1) {
+            const scale = duration / totalTime
             let currentTime = 0
             editingPlan.clips = editingPlan.clips.map(clip => {
               const clipDuration = (clip.endTime - clip.startTime) * scale
               const newClip = {
                 ...clip,
-                startTime: currentTime,
-                endTime: currentTime + clipDuration
+                startTime: Math.round(currentTime * 100) / 100,
+                endTime: Math.round((currentTime + clipDuration) * 100) / 100
               }
               currentTime += clipDuration
               return newClip
             })
+            // 最後のクリップのendTimeを正確にdurationに設定
+            editingPlan.clips[editingPlan.clips.length - 1].endTime = duration
           }
         }
       } else {
