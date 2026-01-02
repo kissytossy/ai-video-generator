@@ -64,65 +64,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Claude APIで編集計画を生成
-    const prompt = `
-## 入力データ
-
-### 画像分析結果（${imageAnalyses.length}枚）
-${imageAnalyses.map((img, i) => `
-画像${i + 1}:
-- シーン: ${img.scene}
-- ムード: ${img.mood}
-- ジャンル: ${img.genre}
-- 視覚的強度: ${img.visualIntensity}/10
-- 推奨モーション: ${img.motionSuggestion}
-- タグ: ${img.tags.join(', ')}
-`).join('\n')}
-
-### 音源分析結果
-- BPM: ${audioAnalysis.bpm}
-- ジャンル: ${audioAnalysis.genre}
-- ムード: ${audioAnalysis.mood}
-- エネルギー: ${audioAnalysis.energy}/10
-- セクション: ${audioAnalysis.sections.map(s => \`\${s.type}(\${s.start.toFixed(1)}s-\${s.end.toFixed(1)}s, エネルギー:\${s.energy})\`).join(', ')}
-
-### 出力設定
-- 動画の長さ: ${duration.toFixed(1)}秒
-- アスペクト比: ${aspectRatio}
-
-### 重要な指示
-1. 各クリップは${(60 / audioAnalysis.bpm * 4).toFixed(2)}秒（4拍）から${(60 / audioAnalysis.bpm * 8).toFixed(2)}秒（8拍）程度で切り替えてください
-2. BPMが${audioAnalysis.bpm}なので、テンポに合わせたリズミカルな切り替えを意識してください
-3. セクションの変わり目（特にサビへの移行）では必ず画像を切り替えてください
-4. すべての画像を均等に使用してください
-5. 動画全体で${Math.max(6, Math.floor(duration / 3))}〜${Math.floor(duration / 2)}個のクリップを生成してください
-
-上記の情報を基に、音楽のリズムに合わせた最適な編集計画を生成してください。
-`
-
-    let editingPlan: EditingPlan
-
-    try {
-      const response = await callClaude(
-        [{ role: 'user', content: prompt }],
-        EDITING_PLAN_PROMPT
-      )
-
-      // JSONをパース
-      const jsonMatch = response.match(/\{[\s\S]*\}/)
-      if (jsonMatch) {
-        editingPlan = JSON.parse(jsonMatch[0])
-      } else {
-        throw new Error('No JSON found in response')
-      }
-    } catch (parseError) {
-      console.error('Failed to parse editing plan:', parseError)
-      // フォールバック: ビートベースの編集計画を生成
-      editingPlan = generateBeatBasedPlan(imageAnalyses, audioAnalysis, duration)
-    }
-
-    // クリップの時間を正規化（durationを超えないように）
-    editingPlan.clips = normalizeClips(editingPlan.clips, duration, imageAnalyses.length)
+    // ビートベースの編集計画を直接生成（高速で確実）
+    const editingPlan = generateBeatBasedPlan(imageAnalyses, audioAnalysis, duration)
 
     return NextResponse.json({
       success: true,
@@ -137,7 +80,7 @@ ${imageAnalyses.map((img, i) => `
   }
 }
 
-// ビートベースの編集計画を生成（フォールバック用）
+// ビートベースの編集計画を生成
 function generateBeatBasedPlan(
   imageAnalyses: ImageAnalysis[],
   audioAnalysis: AudioAnalysis,
@@ -149,60 +92,57 @@ function generateBeatBasedPlan(
   const bpm = audioAnalysis.bpm || 120
   const beatInterval = 60 / bpm
   
-  // 4拍または8拍ごとに切り替え（BPMに応じて調整）
-  const beatsPerClip = bpm > 140 ? 8 : 4
+  // BPMに応じてクリップの長さを決定
+  // BPM 200 → 4拍 = 1.2秒、8拍 = 2.4秒
+  // BPM 120 → 4拍 = 2秒、8拍 = 4秒
+  let beatsPerClip: number
+  if (bpm > 160) {
+    beatsPerClip = 8  // 高速BPMは8拍ごと
+  } else if (bpm > 120) {
+    beatsPerClip = 4  // 中速BPMは4拍ごと
+  } else {
+    beatsPerClip = 4  // 低速BPMも4拍ごと
+  }
+  
   const clipDuration = beatInterval * beatsPerClip
   
-  // 最小クリップ数を確保
-  const minClips = Math.max(imageCount * 2, 6)
-  const maxClipDuration = duration / minClips
-  const actualClipDuration = Math.min(clipDuration, maxClipDuration)
+  // クリップ数を計算（最低でも画像数×2、または6個以上）
+  const estimatedClips = Math.floor(duration / clipDuration)
+  const minClips = Math.max(imageCount * 2, 6, estimatedClips)
   
-  const transitions = ['fade', 'cut', 'slide-left', 'slide-right', 'dissolve']
+  // 実際のクリップ時間を調整
+  const actualClipDuration = Math.min(clipDuration, duration / minClips)
+  
+  console.log(`BPM: ${bpm}, beatsPerClip: ${beatsPerClip}, clipDuration: ${clipDuration.toFixed(2)}s, actualClipDuration: ${actualClipDuration.toFixed(2)}s`)
+  
+  const transitions = ['fade', 'cut', 'slide-left', 'slide-right', 'dissolve', 'zoom']
   const motions = ['zoom-in', 'zoom-out', 'pan-left', 'pan-right', 'static']
   
   let currentTime = 0
   let clipIndex = 0
   
-  while (currentTime < duration) {
+  while (currentTime < duration - 0.1) {
     const imageIndex = clipIndex % imageCount
     const analysis = imageAnalyses[imageIndex]
     
-    // セクションに基づいて切り替えタイミングを調整
     let thisClipDuration = actualClipDuration
-    const currentSection = audioAnalysis.sections.find(
-      s => currentTime >= s.start && currentTime < s.end
-    )
-    const nextSection = audioAnalysis.sections.find(
-      s => s.start > currentTime && s.start < currentTime + actualClipDuration
-    )
-    
-    // 次のセクション境界で切り替え
-    if (nextSection) {
-      thisClipDuration = nextSection.start - currentTime
-    }
-    
-    // 最小0.5秒
-    thisClipDuration = Math.max(0.5, thisClipDuration)
     
     // 残り時間を超えないように
     if (currentTime + thisClipDuration > duration) {
       thisClipDuration = duration - currentTime
     }
     
+    // 最小0.3秒未満なら終了
     if (thisClipDuration < 0.3) break
     
-    // トランジション選択
+    // トランジション選択（バリエーションを持たせる）
     let transition = transitions[clipIndex % transitions.length]
-    if (currentSection?.type === 'chorus') {
-      transition = 'cut' // サビではカット
-    } else if (nextSection?.type === 'chorus') {
-      transition = 'fade' // サビへの移行はフェード
-    }
     
     // モーション選択
-    let motion = analysis.motionSuggestion || motions[clipIndex % motions.length]
-    const intensity = 0.1 + (analysis.visualIntensity / 100)
+    let motion = analysis?.motionSuggestion || motions[clipIndex % motions.length]
+    if (motion === 'static' && clipIndex % 2 === 0) {
+      motion = 'zoom-in'
+    }
     
     clips.push({
       imageIndex,
@@ -214,13 +154,18 @@ function generateBeatBasedPlan(
       },
       motion: {
         type: motion,
-        intensity: Math.min(0.15, intensity),
+        intensity: 0.1,
       },
     })
     
     currentTime += thisClipDuration
     clipIndex++
+    
+    // 無限ループ防止
+    if (clipIndex > 100) break
   }
+  
+  console.log(`Generated ${clips.length} clips for ${duration.toFixed(1)}s video`)
   
   return {
     clips,
