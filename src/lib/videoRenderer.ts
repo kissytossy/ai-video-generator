@@ -1,500 +1,242 @@
-'use client'
+import { NextRequest, NextResponse } from 'next/server'
+import { callClaude, EDITING_PLAN_PROMPT } from '@/lib/claude'
 
-import { FFmpeg } from '@ffmpeg/ffmpeg'
-import { fetchFile, toBlobURL } from '@ffmpeg/util'
-import { UploadedImage, EditingPlan, AspectRatio } from '@/types'
+export const runtime = 'nodejs'
+export const maxDuration = 60
 
-// アスペクト比から解像度を取得
-export const RESOLUTIONS: Record<AspectRatio, { width: number; height: number }> = {
-  '16:9': { width: 1920, height: 1080 },
-  '9:16': { width: 1080, height: 1920 },
-  '1:1': { width: 1080, height: 1080 },
-  '4:5': { width: 1080, height: 1350 },
+interface ImageAnalysis {
+  scene: string
+  mood: string
+  genre: string
+  dominantColors: string[]
+  visualIntensity: number
+  suggestedDuration: string
+  motionSuggestion: string
+  tags: string[]
 }
 
-// イージング関数
-const easings = {
-  linear: (t: number) => t,
-  'ease-in': (t: number) => t * t,
-  'ease-out': (t: number) => t * (2 - t),
-  'ease-in-out': (t: number) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
+interface AudioAnalysis {
+  bpm: number
+  genre: string
+  mood: string
+  energy: number
+  beats: Array<{ time: number; strength: string }>
+  sections: Array<{ start: number; end: number; type: string; energy: number }>
+  highlights: Array<{ time: number; type: string; intensity: number }>
 }
 
-// 画像をCanvasに描画（モーションエフェクト付き）
-export function drawImageWithMotion(
-  ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement,
-  canvasWidth: number,
-  canvasHeight: number,
-  progress: number, // 0-1
-  motion: { type: string; intensity: number },
-  easing: keyof typeof easings = 'ease-out'
-) {
-  // progressを0-1の範囲に制限
-  const clampedProgress = Math.max(0, Math.min(1, progress))
-  const easedProgress = easings[easing](clampedProgress)
-  // intensityを0.05-0.15の範囲に制限（自然なズーム/パン）
-  const intensity = Math.max(0.05, Math.min(0.15, motion.intensity || 0.1))
-
-  // 画像のアスペクト比を維持しながらカバー
-  const imgAspect = img.width / img.height
-  const canvasAspect = canvasWidth / canvasHeight
-
-  let drawWidth: number, drawHeight: number, offsetX: number, offsetY: number
-
-  if (imgAspect > canvasAspect) {
-    // 画像が横長
-    drawHeight = canvasHeight
-    drawWidth = drawHeight * imgAspect
-    offsetX = (canvasWidth - drawWidth) / 2
-    offsetY = 0
-  } else {
-    // 画像が縦長
-    drawWidth = canvasWidth
-    drawHeight = drawWidth / imgAspect
-    offsetX = 0
-    offsetY = (canvasHeight - drawHeight) / 2
-  }
-
-  ctx.save()
-
-  // モーションエフェクトを適用
-  switch (motion.type) {
-    case 'zoom-in': {
-      const scale = 1 + intensity * easedProgress
-      const centerX = canvasWidth / 2
-      const centerY = canvasHeight / 2
-      ctx.translate(centerX, centerY)
-      ctx.scale(scale, scale)
-      ctx.translate(-centerX, -centerY)
-      break
-    }
-    case 'zoom-out': {
-      const scale = 1 + intensity * (1 - easedProgress)
-      const centerX = canvasWidth / 2
-      const centerY = canvasHeight / 2
-      ctx.translate(centerX, centerY)
-      ctx.scale(scale, scale)
-      ctx.translate(-centerX, -centerY)
-      break
-    }
-    case 'pan-left': {
-      const panX = drawWidth * intensity * easedProgress
-      offsetX -= panX
-      break
-    }
-    case 'pan-right': {
-      const panX = drawWidth * intensity * easedProgress
-      offsetX += panX
-      break
-    }
-    case 'pan-up': {
-      const panY = drawHeight * intensity * easedProgress
-      offsetY -= panY
-      break
-    }
-    case 'pan-down': {
-      const panY = drawHeight * intensity * easedProgress
-      offsetY += panY
-      break
-    }
-    // static - 何もしない
-  }
-
-  ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight)
-  ctx.restore()
+interface EditingPlanRequest {
+  imageAnalyses: ImageAnalysis[]
+  audioAnalysis: AudioAnalysis
+  duration: number
+  aspectRatio: string
 }
 
-// トランジション描画
-export function drawTransition(
-  ctx: CanvasRenderingContext2D,
-  imgFrom: HTMLImageElement | null,
-  imgTo: HTMLImageElement,
-  canvasWidth: number,
-  canvasHeight: number,
-  progress: number, // 0-1
-  transitionType: string,
-  direction?: string
-) {
-  ctx.save()
-
-  switch (transitionType) {
-    case 'fade':
-      // フェードイン/アウト
-      if (imgFrom) {
-        ctx.globalAlpha = 1 - progress
-        drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
-      }
-      ctx.globalAlpha = progress
-      drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
-      break
-
-    case 'slide':
-      // スライド
-      const slideDirection = direction || 'left'
-      if (imgFrom) {
-        let fromX = 0, fromY = 0
-        let toX = 0, toY = 0
-        
-        switch (slideDirection) {
-          case 'left':
-            fromX = -canvasWidth * progress
-            toX = canvasWidth * (1 - progress)
-            break
-          case 'right':
-            fromX = canvasWidth * progress
-            toX = -canvasWidth * (1 - progress)
-            break
-          case 'up':
-            fromY = -canvasHeight * progress
-            toY = canvasHeight * (1 - progress)
-            break
-          case 'down':
-            fromY = canvasHeight * progress
-            toY = -canvasHeight * (1 - progress)
-            break
-        }
-        
-        ctx.save()
-        ctx.translate(fromX, fromY)
-        drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
-        ctx.restore()
-        
-        ctx.save()
-        ctx.translate(toX, toY)
-        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
-        ctx.restore()
-      } else {
-        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
-      }
-      break
-
-    case 'wipe':
-      // ワイプ
-      if (imgFrom) {
-        drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
-      }
-      ctx.save()
-      ctx.beginPath()
-      ctx.rect(0, 0, canvasWidth * progress, canvasHeight)
-      ctx.clip()
-      drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
-      ctx.restore()
-      break
-
-    case 'cut':
-    default:
-      // カット（即座に切り替え）
-      drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
-      break
+interface Clip {
+  imageIndex: number
+  startTime: number
+  endTime: number
+  transition: {
+    type: string
+    duration: number
   }
-
-  ctx.restore()
+  motion: {
+    type: string
+    intensity: number
+  }
 }
 
-// 画像をロード
-export async function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload = () => resolve(img)
-    img.onerror = reject
-    img.src = src
-  })
+interface EditingPlan {
+  clips: Clip[]
+  overallMood: string
+  suggestedTitle: string
 }
 
-// プレビュー用フレームレンダラー
-export class PreviewRenderer {
-  private canvas: HTMLCanvasElement
-  private ctx: CanvasRenderingContext2D
-  private images: HTMLImageElement[] = []
-  private editingPlan: EditingPlan | null = null
-  private aspectRatio: AspectRatio = '16:9'
+export async function POST(request: NextRequest) {
+  try {
+    const body: EditingPlanRequest = await request.json()
+    const { imageAnalyses, audioAnalysis, duration, aspectRatio } = body
 
-  constructor(canvas: HTMLCanvasElement) {
-    this.canvas = canvas
-    const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('Failed to get canvas context')
-    this.ctx = ctx
-  }
-
-  async setImages(uploadedImages: UploadedImage[]) {
-    this.images = await Promise.all(
-      uploadedImages.map(img => loadImage(img.preview))
-    )
-  }
-
-  setEditingPlan(plan: EditingPlan) {
-    this.editingPlan = plan
-  }
-
-  setAspectRatio(ratio: AspectRatio) {
-    this.aspectRatio = ratio
-    const { width, height } = RESOLUTIONS[ratio]
-    // プレビュー用にスケールダウン
-    const scale = Math.min(800 / width, 600 / height)
-    this.canvas.width = width * scale
-    this.canvas.height = height * scale
-  }
-
-  // 特定の時間のフレームを描画
-  renderFrame(currentTime: number) {
-    if (!this.editingPlan || this.images.length === 0) return
-
-    const { width, height } = this.canvas
-    this.ctx.fillStyle = '#000'
-    this.ctx.fillRect(0, 0, width, height)
-
-    const clips = this.editingPlan.clips
-
-    // 現在のクリップを見つける
-    let currentClipIndex = clips.findIndex(
-      clip => currentTime >= clip.startTime && currentTime < clip.endTime
-    )
-
-    if (currentClipIndex === -1) {
-      // 最後のクリップの後
-      currentClipIndex = clips.length - 1
-    }
-
-    const currentClip = clips[currentClipIndex]
-    if (!currentClip) return
-
-    const currentImage = this.images[currentClip.imageIndex]
-    if (!currentImage) return
-
-    const clipDuration = currentClip.endTime - currentClip.startTime
-    const clipProgress = (currentTime - currentClip.startTime) / clipDuration
-    const transitionDuration = currentClip.transition.duration
-
-    // トランジション中かどうか
-    const transitionProgress = currentClip.transition.duration > 0 
-      ? Math.min(1, (currentTime - currentClip.startTime) / transitionDuration)
-      : 1
-
-    if (transitionProgress < 1 && currentClipIndex > 0) {
-      // トランジション中
-      const prevClip = clips[currentClipIndex - 1]
-      const prevImage = this.images[prevClip?.imageIndex]
-      
-      drawTransition(
-        this.ctx,
-        prevImage || null,
-        currentImage,
-        width,
-        height,
-        transitionProgress,
-        currentClip.transition.type
-      )
-    } else {
-      // 通常描画（モーションエフェクト付き）
-      drawImageWithMotion(
-        this.ctx,
-        currentImage,
-        width,
-        height,
-        clipProgress,
-        currentClip.motion,
-        'ease-out'
+    if (!imageAnalyses || imageAnalyses.length === 0) {
+      return NextResponse.json(
+        { error: 'No image analyses provided' },
+        { status: 400 }
       )
     }
-  }
-}
 
-// FFmpegによる動画生成
-export class VideoGenerator {
-  private ffmpeg: FFmpeg | null = null
-  private loaded = false
-
-  async load(onProgress?: (message: string) => void) {
-    if (this.loaded) return
-
-    this.ffmpeg = new FFmpeg()
+    const imageCount = imageAnalyses.length
     
-    this.ffmpeg.on('log', ({ message }) => {
-      console.log('[FFmpeg]', message)
-    })
+    // strongビートの位置を抽出（切り替えポイント候補）
+    const strongBeats = audioAnalysis.beats
+      .filter(b => b.strength === 'strong' && b.time <= duration)
+      .map(b => b.time)
+    
+    // Claude APIで編集計画を生成
+    const prompt = `
+あなたは動画編集のプロフェッショナルです。音楽に合わせた動画編集計画を作成してください。
 
-    this.ffmpeg.on('progress', ({ progress }) => {
-      onProgress?.(`エンコード中... ${Math.round(progress * 100)}%`)
-    })
+## 入力データ
 
-    // FFmpegをロード
-    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm'
-    await this.ffmpeg.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-    })
+### 画像（${imageCount}枚）
+${imageAnalyses.map((img, i) => `画像${i + 1}: ${img.scene}, ${img.mood}, 強度${img.visualIntensity}/10`).join('\n')}
 
-    this.loaded = true
-  }
+### 音源情報
+- BPM: ${audioAnalysis.bpm}
+- ジャンル: ${audioAnalysis.genre}
+- ムード: ${audioAnalysis.mood}
+- エネルギー: ${audioAnalysis.energy}/10
+- 動画の長さ: ${duration.toFixed(1)}秒
 
-  async generateVideo(
-    images: UploadedImage[],
-    audioFile: File,
-    editingPlan: EditingPlan,
-    aspectRatio: AspectRatio,
-    startTime: number,
-    endTime: number,
-    fps: number = 30,
-    onProgress?: (message: string, progress: number) => void
-  ): Promise<Blob> {
-    if (!this.ffmpeg) {
-      throw new Error('FFmpeg not loaded')
-    }
+### strongビートの位置（秒）
+${strongBeats.slice(0, 30).map(t => t.toFixed(2)).join(', ')}${strongBeats.length > 30 ? '...' : ''}
 
-    const { width, height } = RESOLUTIONS[aspectRatio]
-    const duration = endTime - startTime
-    const totalFrames = Math.ceil(duration * fps)
+## 重要なルール
 
-    onProgress?.('画像を準備中...', 0)
+1. **画像は${imageCount}枚のみ使用**してください。imageIndexは0から${imageCount - 1}の範囲です。
+2. **クリップの数は${imageCount}個**にしてください（画像1枚につき1クリップ）。
+3. **切り替えタイミングは曲調に合わせて**ください：
+   - strongビートの位置で切り替えると自然です
+   - 激しい部分は短く、穏やかな部分は長くしてください
+   - 各クリップの長さは異なってOKです
+4. **トランジション**は曲調に合わせて選んでください：
+   - 激しい部分: cut（瞬時切り替え）
+   - 穏やかな部分: fade, dissolve
+   - 動きのある部分: slide-left, slide-right, zoom
+5. **モーション**も曲調に合わせてください：
+   - エネルギッシュな部分: zoom-in, pan-left, pan-right
+   - 落ち着いた部分: static, zoom-out
 
-    // Canvasを作成
-    const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-    const ctx = canvas.getContext('2d')!
+## 出力形式（必ずこのJSON形式で）
 
-    // 画像をロード
-    const loadedImages = await Promise.all(
-      images.map(img => loadImage(img.preview))
-    )
+{
+  "clips": [
+    {
+      "imageIndex": 0,
+      "startTime": 0,
+      "endTime": （曲調に合わせた秒数）,
+      "transition": { "type": "fade", "duration": 0.3 },
+      "motion": { "type": "zoom-in", "intensity": 0.1 }
+    },
+    ...
+  ],
+  "overallMood": "（全体の雰囲気）",
+  "suggestedTitle": "（タイトル案）"
+}
 
-    onProgress?.('フレームを生成中...', 10)
+JSONのみを出力してください。説明は不要です。`
 
-    // フレームを生成してFFmpegに書き込み
-    for (let frame = 0; frame < totalFrames; frame++) {
-      // 編集計画は0秒から始まるので、フレーム位置のみで計算
-      const currentTime = frame / fps
-      
-      // フレームを描画
-      ctx.fillStyle = '#000'
-      ctx.fillRect(0, 0, width, height)
-      const clips = editingPlan.clips
-      let currentClipIndex = clips.findIndex(
-        clip => currentTime >= clip.startTime && currentTime < clip.endTime
+    let editingPlan: EditingPlan
+
+    try {
+      const response = await callClaude(
+        [{ role: 'user', content: prompt }],
+        EDITING_PLAN_PROMPT
       )
 
-      if (currentClipIndex === -1) {
-        currentClipIndex = clips.length - 1
-      }
-
-      const currentClip = clips[currentClipIndex]
-      if (currentClip) {
-        const currentImage = loadedImages[currentClip.imageIndex]
-        if (currentImage) {
-          const clipDuration = currentClip.endTime - currentClip.startTime
-          const clipProgress = (currentTime - currentClip.startTime) / clipDuration
-          const transitionDuration = currentClip.transition.duration
-          const transitionProgress = transitionDuration > 0 
-            ? Math.min(1, (currentTime - currentClip.startTime) / transitionDuration)
-            : 1
-
-          if (transitionProgress < 1 && currentClipIndex > 0) {
-            const prevClip = clips[currentClipIndex - 1]
-            const prevImage = loadedImages[prevClip?.imageIndex]
-            
-            drawTransition(
-              ctx,
-              prevImage || null,
-              currentImage,
-              width,
-              height,
-              transitionProgress,
-              currentClip.transition.type
-            )
-          } else {
-            drawImageWithMotion(
-              ctx,
-              currentImage,
-              width,
-              height,
-              clipProgress,
-              currentClip.motion,
-              'ease-out'
-            )
+      // JSONをパース
+      const jsonMatch = response.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        editingPlan = JSON.parse(jsonMatch[0])
+        
+        // クリップ数と画像インデックスを検証・修正
+        if (editingPlan.clips) {
+          // imageIndexが範囲外の場合は修正
+          editingPlan.clips = editingPlan.clips.map((clip, i) => ({
+            ...clip,
+            imageIndex: Math.min(clip.imageIndex, imageCount - 1)
+          }))
+          
+          // 時間を正規化（duration内に収める）
+          const lastClip = editingPlan.clips[editingPlan.clips.length - 1]
+          if (lastClip && lastClip.endTime !== duration) {
+            const scale = duration / lastClip.endTime
+            let currentTime = 0
+            editingPlan.clips = editingPlan.clips.map(clip => {
+              const clipDuration = (clip.endTime - clip.startTime) * scale
+              const newClip = {
+                ...clip,
+                startTime: currentTime,
+                endTime: currentTime + clipDuration
+              }
+              currentTime += clipDuration
+              return newClip
+            })
           }
         }
+      } else {
+        throw new Error('No JSON found in response')
       }
-
-      // フレームをPNGとして保存
-      const blob = await new Promise<Blob>((resolve) => {
-        canvas.toBlob((b) => resolve(b!), 'image/png')
-      })
-      const frameData = new Uint8Array(await blob.arrayBuffer())
-      const frameName = `frame${String(frame).padStart(6, '0')}.png`
-      await this.ffmpeg!.writeFile(frameName, frameData)
-
-      // 進捗報告（10% - 70%）
-      const frameProgress = 10 + (frame / totalFrames) * 60
-      if (frame % Math.ceil(totalFrames / 20) === 0) {
-        onProgress?.(`フレーム生成中... ${frame}/${totalFrames}`, frameProgress)
-      }
+    } catch (parseError) {
+      console.error('Failed to parse editing plan:', parseError)
+      // フォールバック: シンプルな編集計画を生成
+      editingPlan = generateSimplePlan(imageAnalyses, audioAnalysis, duration)
     }
 
-    onProgress?.('音源を準備中...', 70)
-
-    // 音源を書き込み
-    const audioData = await fetchFile(audioFile)
-    await this.ffmpeg.writeFile('audio.mp3', audioData)
-
-    onProgress?.('動画をエンコード中...', 75)
-
-    // FFmpegで動画生成
-    await this.ffmpeg.exec([
-      '-framerate', String(fps),
-      '-i', 'frame%06d.png',
-      '-ss', String(startTime),
-      '-t', String(duration),
-      '-i', 'audio.mp3',
-      '-c:v', 'libx264',
-      '-pix_fmt', 'yuv420p',
-      '-c:a', 'aac',
-      '-b:a', '192k',
-      '-shortest',
-      '-y',
-      'output.mp4'
-    ])
-
-    onProgress?.('完了！', 100)
-
-    // 出力を取得
-    const data = await this.ffmpeg.readFile('output.mp4')
-    
-    // クリーンアップ
-    for (let frame = 0; frame < totalFrames; frame++) {
-      const frameName = `frame${String(frame).padStart(6, '0')}.png`
-      await this.ffmpeg.deleteFile(frameName).catch(() => {})
-    }
-    await this.ffmpeg.deleteFile('audio.mp3').catch(() => {})
-    await this.ffmpeg.deleteFile('output.mp4').catch(() => {})
-
-    // FileDataをBlobに変換
-    let bytes: Uint8Array
-    if (typeof data === 'string') {
-      // Base64文字列の場合
-      const binaryString = atob(data)
-      bytes = new Uint8Array(binaryString.length)
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i)
-      }
-    } else {
-      // Uint8Arrayの場合 - 新しいUint8Arrayにコピーして型を確定させる
-      const srcArray = data as Uint8Array
-      bytes = new Uint8Array(srcArray.length)
-      bytes.set(srcArray)
-    }
-    // @ts-ignore - TypeScript 5.9の厳密な型チェックを回避
-    return new Blob([bytes], { type: 'video/mp4' })
+    return NextResponse.json({
+      success: true,
+      editingPlan,
+    })
+  } catch (error) {
+    console.error('Editing plan generation error:', error)
+    return NextResponse.json(
+      { error: 'Failed to generate editing plan', details: String(error) },
+      { status: 500 }
+    )
   }
 }
 
-// シングルトンインスタンス
-let videoGeneratorInstance: VideoGenerator | null = null
-
-export function getVideoGenerator(): VideoGenerator {
-  if (!videoGeneratorInstance) {
-    videoGeneratorInstance = new VideoGenerator()
+// フォールバック用のシンプルな編集計画（画像枚数分のクリップ）
+function generateSimplePlan(
+  imageAnalyses: ImageAnalysis[],
+  audioAnalysis: AudioAnalysis,
+  duration: number
+): EditingPlan {
+  const imageCount = imageAnalyses.length
+  const clips: Clip[] = []
+  
+  // strongビートを取得して切り替えポイントを決定
+  const strongBeats = audioAnalysis.beats
+    .filter(b => b.strength === 'strong' && b.time <= duration)
+    .map(b => b.time)
+  
+  // 画像枚数に応じた切り替えポイントを選択
+  const switchPoints = [0]
+  if (strongBeats.length >= imageCount) {
+    // strongビートから等間隔で選択
+    const step = Math.floor(strongBeats.length / imageCount)
+    for (let i = 1; i < imageCount; i++) {
+      switchPoints.push(strongBeats[i * step] || (duration * i / imageCount))
+    }
+  } else {
+    // strongビートが少ない場合は時間で分割
+    for (let i = 1; i < imageCount; i++) {
+      switchPoints.push(duration * i / imageCount)
+    }
   }
-  return videoGeneratorInstance
+  switchPoints.push(duration)
+  
+  const transitions = ['fade', 'cut', 'slide-left', 'dissolve']
+  const motions = ['zoom-in', 'zoom-out', 'pan-left', 'pan-right']
+  
+  for (let i = 0; i < imageCount; i++) {
+    clips.push({
+      imageIndex: i,
+      startTime: switchPoints[i],
+      endTime: switchPoints[i + 1],
+      transition: {
+        type: i === 0 ? 'fade' : transitions[i % transitions.length],
+        duration: 0.3,
+      },
+      motion: {
+        type: motions[i % motions.length],
+        intensity: 0.1,
+      },
+    })
+  }
+  
+  return {
+    clips,
+    overallMood: audioAnalysis.mood || 'energetic',
+    suggestedTitle: 'AI Generated Video',
+  }
 }
