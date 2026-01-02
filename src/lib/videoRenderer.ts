@@ -370,14 +370,6 @@ export class VideoGenerator {
       // フレームを描画
       ctx.fillStyle = '#000'
       ctx.fillRect(0, 0, width, height)
-if (frame === 0) {
-  console.log('Total clips:', clips.length)
-  console.log('Clips:', JSON.stringify(clips, null, 2))
-  console.log('Duration:', duration, 'TotalFrames:', totalFrames)
-}
-if (frame % 100 === 0) {
-  console.log('Frame:', frame, 'currentTime:', currentTime, 'clipIndex:', currentClipIndex)
-}
       const clips = editingPlan.clips
       let currentClipIndex = clips.findIndex(
         clip => currentTime >= clip.startTime && currentTime < clip.endTime
