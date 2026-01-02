@@ -64,8 +64,113 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // ビートベースの編集計画を直接生成（高速で確実）
-    const editingPlan = generateBeatBasedPlan(imageAnalyses, audioAnalysis, duration)
+    const imageCount = imageAnalyses.length
+    
+    // strongビートの位置を抽出（切り替えポイント候補）
+    const strongBeats = audioAnalysis.beats
+      .filter(b => b.strength === 'strong' && b.time <= duration)
+      .map(b => b.time)
+    
+    // Claude APIで編集計画を生成
+    const prompt = `
+あなたは動画編集のプロフェッショナルです。音楽に合わせた動画編集計画を作成してください。
+
+## 入力データ
+
+### 画像（${imageCount}枚）
+${imageAnalyses.map((img, i) => `画像${i + 1}: ${img.scene}, ${img.mood}, 強度${img.visualIntensity}/10`).join('\n')}
+
+### 音源情報
+- BPM: ${audioAnalysis.bpm}
+- ジャンル: ${audioAnalysis.genre}
+- ムード: ${audioAnalysis.mood}
+- エネルギー: ${audioAnalysis.energy}/10
+- 動画の長さ: ${duration.toFixed(1)}秒
+
+### strongビートの位置（秒）
+${strongBeats.slice(0, 30).map(t => t.toFixed(2)).join(', ')}${strongBeats.length > 30 ? '...' : ''}
+
+## 重要なルール
+
+1. **画像は${imageCount}枚のみ使用**してください。imageIndexは0から${imageCount - 1}の範囲です。
+2. **クリップの数は${imageCount}個**にしてください（画像1枚につき1クリップ）。
+3. **切り替えタイミングは曲調に合わせて**ください：
+   - strongビートの位置で切り替えると自然です
+   - 激しい部分は短く、穏やかな部分は長くしてください
+   - 各クリップの長さは異なってOKです
+4. **トランジション**は曲調に合わせて選んでください：
+   - 激しい部分: cut（瞬時切り替え）
+   - 穏やかな部分: fade, dissolve
+   - 動きのある部分: slide-left, slide-right, zoom
+5. **モーション**も曲調に合わせてください：
+   - エネルギッシュな部分: zoom-in, pan-left, pan-right
+   - 落ち着いた部分: static, zoom-out
+
+## 出力形式（必ずこのJSON形式で）
+
+{
+  "clips": [
+    {
+      "imageIndex": 0,
+      "startTime": 0,
+      "endTime": （曲調に合わせた秒数）,
+      "transition": { "type": "fade", "duration": 0.3 },
+      "motion": { "type": "zoom-in", "intensity": 0.1 }
+    },
+    ...
+  ],
+  "overallMood": "（全体の雰囲気）",
+  "suggestedTitle": "（タイトル案）"
+}
+
+JSONのみを出力してください。説明は不要です。`
+
+    let editingPlan: EditingPlan
+
+    try {
+      const response = await callClaude(
+        [{ role: 'user', content: prompt }],
+        EDITING_PLAN_PROMPT
+      )
+
+      // JSONをパース
+      const jsonMatch = response.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        editingPlan = JSON.parse(jsonMatch[0])
+        
+        // クリップ数と画像インデックスを検証・修正
+        if (editingPlan.clips) {
+          // imageIndexが範囲外の場合は修正
+          editingPlan.clips = editingPlan.clips.map((clip, i) => ({
+            ...clip,
+            imageIndex: Math.min(clip.imageIndex, imageCount - 1)
+          }))
+          
+          // 時間を正規化（duration内に収める）
+          const lastClip = editingPlan.clips[editingPlan.clips.length - 1]
+          if (lastClip && lastClip.endTime !== duration) {
+            const scale = duration / lastClip.endTime
+            let currentTime = 0
+            editingPlan.clips = editingPlan.clips.map(clip => {
+              const clipDuration = (clip.endTime - clip.startTime) * scale
+              const newClip = {
+                ...clip,
+                startTime: currentTime,
+                endTime: currentTime + clipDuration
+              }
+              currentTime += clipDuration
+              return newClip
+            })
+          }
+        }
+      } else {
+        throw new Error('No JSON found in response')
+      }
+    } catch (parseError) {
+      console.error('Failed to parse editing plan:', parseError)
+      // フォールバック: シンプルな編集計画を生成
+      editingPlan = generateSimplePlan(imageAnalyses, audioAnalysis, duration)
+    }
 
     return NextResponse.json({
       success: true,
@@ -80,8 +185,8 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// ビートベースの編集計画を生成
-function generateBeatBasedPlan(
+// フォールバック用のシンプルな編集計画（画像枚数分のクリップ）
+function generateSimplePlan(
   imageAnalyses: ImageAnalysis[],
   audioAnalysis: AudioAnalysis,
   duration: number
@@ -89,142 +194,49 @@ function generateBeatBasedPlan(
   const imageCount = imageAnalyses.length
   const clips: Clip[] = []
   
-  const bpm = audioAnalysis.bpm || 120
-  const beatInterval = 60 / bpm
+  // strongビートを取得して切り替えポイントを決定
+  const strongBeats = audioAnalysis.beats
+    .filter(b => b.strength === 'strong' && b.time <= duration)
+    .map(b => b.time)
   
-  // BPMに応じてクリップの長さを決定
-  // BPM 200 → 4拍 = 1.2秒、8拍 = 2.4秒
-  // BPM 120 → 4拍 = 2秒、8拍 = 4秒
-  let beatsPerClip: number
-  if (bpm > 160) {
-    beatsPerClip = 8  // 高速BPMは8拍ごと
-  } else if (bpm > 120) {
-    beatsPerClip = 4  // 中速BPMは4拍ごと
+  // 画像枚数に応じた切り替えポイントを選択
+  const switchPoints = [0]
+  if (strongBeats.length >= imageCount) {
+    // strongビートから等間隔で選択
+    const step = Math.floor(strongBeats.length / imageCount)
+    for (let i = 1; i < imageCount; i++) {
+      switchPoints.push(strongBeats[i * step] || (duration * i / imageCount))
+    }
   } else {
-    beatsPerClip = 4  // 低速BPMも4拍ごと
+    // strongビートが少ない場合は時間で分割
+    for (let i = 1; i < imageCount; i++) {
+      switchPoints.push(duration * i / imageCount)
+    }
   }
+  switchPoints.push(duration)
   
-  const clipDuration = beatInterval * beatsPerClip
+  const transitions = ['fade', 'cut', 'slide-left', 'dissolve']
+  const motions = ['zoom-in', 'zoom-out', 'pan-left', 'pan-right']
   
-  // クリップ数を計算（最低でも画像数×2、または6個以上）
-  const estimatedClips = Math.floor(duration / clipDuration)
-  const minClips = Math.max(imageCount * 2, 6, estimatedClips)
-  
-  // 実際のクリップ時間を調整
-  const actualClipDuration = Math.min(clipDuration, duration / minClips)
-  
-  console.log(`BPM: ${bpm}, beatsPerClip: ${beatsPerClip}, clipDuration: ${clipDuration.toFixed(2)}s, actualClipDuration: ${actualClipDuration.toFixed(2)}s`)
-  
-  const transitions = ['fade', 'cut', 'slide-left', 'slide-right', 'dissolve', 'zoom']
-  const motions = ['zoom-in', 'zoom-out', 'pan-left', 'pan-right', 'static']
-  
-  let currentTime = 0
-  let clipIndex = 0
-  
-  while (currentTime < duration - 0.1) {
-    const imageIndex = clipIndex % imageCount
-    const analysis = imageAnalyses[imageIndex]
-    
-    let thisClipDuration = actualClipDuration
-    
-    // 残り時間を超えないように
-    if (currentTime + thisClipDuration > duration) {
-      thisClipDuration = duration - currentTime
-    }
-    
-    // 最小0.3秒未満なら終了
-    if (thisClipDuration < 0.3) break
-    
-    // トランジション選択（バリエーションを持たせる）
-    let transition = transitions[clipIndex % transitions.length]
-    
-    // モーション選択
-    let motion = analysis?.motionSuggestion || motions[clipIndex % motions.length]
-    if (motion === 'static' && clipIndex % 2 === 0) {
-      motion = 'zoom-in'
-    }
-    
+  for (let i = 0; i < imageCount; i++) {
     clips.push({
-      imageIndex,
-      startTime: currentTime,
-      endTime: currentTime + thisClipDuration,
+      imageIndex: i,
+      startTime: switchPoints[i],
+      endTime: switchPoints[i + 1],
       transition: {
-        type: clipIndex === 0 ? 'fade' : transition,
-        duration: transition === 'cut' ? 0 : 0.3,
+        type: i === 0 ? 'fade' : transitions[i % transitions.length],
+        duration: 0.3,
       },
       motion: {
-        type: motion,
+        type: motions[i % motions.length],
         intensity: 0.1,
       },
     })
-    
-    currentTime += thisClipDuration
-    clipIndex++
-    
-    // 無限ループ防止
-    if (clipIndex > 100) break
   }
-  
-  console.log(`Generated ${clips.length} clips for ${duration.toFixed(1)}s video`)
   
   return {
     clips,
     overallMood: audioAnalysis.mood || 'energetic',
     suggestedTitle: 'AI Generated Video',
   }
-}
-
-// クリップの時間を正規化
-function normalizeClips(clips: Clip[], duration: number, imageCount: number): Clip[] {
-  if (!clips || clips.length === 0) {
-    return generateDefaultClips(duration, imageCount)
-  }
-
-  // 時間の正規化
-  const lastClip = clips[clips.length - 1]
-  const totalTime = lastClip ? lastClip.endTime : 0
-  
-  if (totalTime <= 0) {
-    return generateDefaultClips(duration, imageCount)
-  }
-  
-  const scale = duration / totalTime
-
-  let currentTime = 0
-  return clips.map((clip, index) => {
-    const clipDuration = (clip.endTime - clip.startTime) * scale
-    const newClip = {
-      ...clip,
-      startTime: currentTime,
-      endTime: currentTime + clipDuration,
-      imageIndex: clip.imageIndex % imageCount,
-    }
-    currentTime += clipDuration
-    return newClip
-  })
-}
-
-function generateDefaultClips(duration: number, imageCount: number): Clip[] {
-  const clipDuration = duration / Math.max(imageCount * 2, 6)
-  const clips: Clip[] = []
-  let currentTime = 0
-  let index = 0
-  
-  while (currentTime < duration) {
-    const actualDuration = Math.min(clipDuration, duration - currentTime)
-    if (actualDuration < 0.3) break
-    
-    clips.push({
-      imageIndex: index % imageCount,
-      startTime: currentTime,
-      endTime: currentTime + actualDuration,
-      transition: { type: index === 0 ? 'fade' : 'cut', duration: 0.3 },
-      motion: { type: 'zoom-in', intensity: 0.1 },
-    })
-    
-    currentTime += actualDuration
-    index++
-  }
-  
-  return clips
 }
