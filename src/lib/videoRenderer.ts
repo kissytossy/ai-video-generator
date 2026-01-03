@@ -79,23 +79,59 @@ export function drawImageWithMotion(
       break
     }
     case 'pan-left': {
-      const panX = drawWidth * intensity * easedProgress
-      offsetX -= panX
+      // パン量に合わせて拡大（黒い背景を防ぐ）
+      const panAmount = intensity // 最大パン量（割合）
+      const scale = 1 + panAmount * 2 // パン量の2倍を拡大
+      const centerX = canvasWidth / 2
+      const centerY = canvasHeight / 2
+      ctx.translate(centerX, centerY)
+      ctx.scale(scale, scale)
+      ctx.translate(-centerX, -centerY)
+      // 拡大後にパン
+      const panX = canvasWidth * intensity * easedProgress
+      ctx.translate(-panX, 0)
       break
     }
     case 'pan-right': {
-      const panX = drawWidth * intensity * easedProgress
-      offsetX += panX
+      // パン量に合わせて拡大（黒い背景を防ぐ）
+      const panAmount = intensity
+      const scale = 1 + panAmount * 2
+      const centerX = canvasWidth / 2
+      const centerY = canvasHeight / 2
+      ctx.translate(centerX, centerY)
+      ctx.scale(scale, scale)
+      ctx.translate(-centerX, -centerY)
+      // 拡大後にパン
+      const panX = canvasWidth * intensity * easedProgress
+      ctx.translate(panX, 0)
       break
     }
     case 'pan-up': {
-      const panY = drawHeight * intensity * easedProgress
-      offsetY -= panY
+      // パン量に合わせて拡大（黒い背景を防ぐ）
+      const panAmount = intensity
+      const scale = 1 + panAmount * 2
+      const centerX = canvasWidth / 2
+      const centerY = canvasHeight / 2
+      ctx.translate(centerX, centerY)
+      ctx.scale(scale, scale)
+      ctx.translate(-centerX, -centerY)
+      // 拡大後にパン
+      const panY = canvasHeight * intensity * easedProgress
+      ctx.translate(0, -panY)
       break
     }
     case 'pan-down': {
-      const panY = drawHeight * intensity * easedProgress
-      offsetY += panY
+      // パン量に合わせて拡大（黒い背景を防ぐ）
+      const panAmount = intensity
+      const scale = 1 + panAmount * 2
+      const centerX = canvasWidth / 2
+      const centerY = canvasHeight / 2
+      ctx.translate(centerX, centerY)
+      ctx.scale(scale, scale)
+      ctx.translate(-centerX, -centerY)
+      // 拡大後にパン
+      const panY = canvasHeight * intensity * easedProgress
+      ctx.translate(0, panY)
       break
     }
     // static - 何もしない
