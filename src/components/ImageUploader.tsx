@@ -52,10 +52,18 @@ function SortableImageItem({
     opacity: isDragging ? 0.5 : 1,
   }
 
+  // ダブルクリック/ダブルタップで削除
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    onRemove(image.id)
+  }
+
   return (
     <div
       ref={setNodeRef}
       style={style}
+      onDoubleClick={handleDoubleClick}
       className={`relative group aspect-square rounded-lg overflow-hidden bg-gray-100 ${
         isDragging ? 'ring-2 ring-primary-500 ring-offset-2' : ''
       }`}
@@ -63,9 +71,7 @@ function SortableImageItem({
       <img
         src={image.preview}
         alt={image.name}
-        className="w-full h-full object-cover"
-        {...attributes}
-        {...listeners}
+        className="w-full h-full object-cover pointer-events-none"
       />
       {/* 順番表示 */}
       <div className="absolute top-1 left-1 bg-black/60 text-white text-xs px-1.5 py-0.5 rounded font-medium">
