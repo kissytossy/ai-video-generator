@@ -199,10 +199,10 @@ export default function TimelineView({ editingPlan, images, duration, onEditingP
               <select
                 value={editingPlan.clips[editingClipIndex].transition.type}
                 onChange={(e) => handleTransitionChange(editingClipIndex, e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               >
                 {TRANSITION_OPTIONS.map(option => (
-                  <option key={option.value} value={option.value}>
+                  <option key={option.value} value={option.value} className="text-gray-900 bg-white">
                     {option.icon} {option.label}
                   </option>
                 ))}
@@ -217,10 +217,10 @@ export default function TimelineView({ editingPlan, images, duration, onEditingP
               <select
                 value={editingPlan.clips[editingClipIndex].motion.type}
                 onChange={(e) => handleMotionChange(editingClipIndex, e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               >
                 {MOTION_OPTIONS.map(option => (
-                  <option key={option.value} value={option.value}>
+                  <option key={option.value} value={option.value} className="text-gray-900 bg-white">
                     {option.icon} {option.label}
                   </option>
                 ))}

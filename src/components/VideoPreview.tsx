@@ -1,286 +1,263 @@
 'use client'
 
-import { useState } from 'react'
-import { EditingPlan, UploadedImage, EditingClip } from '@/types'
+import { useRef, useEffect, useState, useCallback } from 'react'
+import { UploadedImage, UploadedAudio, EditingPlan, AspectRatio } from '@/types'
+import { PreviewRenderer, RESOLUTIONS } from '@/lib/videoRenderer'
 
 interface Props {
-  editingPlan: EditingPlan
   images: UploadedImage[]
-  duration: number
-  onEditingPlanChange?: (plan: EditingPlan) => void
+  audio: UploadedAudio | null
+  editingPlan: EditingPlan | null
+  aspectRatio: AspectRatio
+  startTime: number
+  endTime: number
 }
 
-const TRANSITION_OPTIONS = [
-  { value: 'none', label: 'なし', icon: '✕' },
-  { value: 'cut', label: 'カット', icon: '|' },
-  { value: 'fade', label: 'フェード', icon: '◐' },
-  { value: 'dissolve', label: 'ディゾルブ', icon: '◑' },
-  { value: 'slide-left', label: 'スライド←', icon: '←' },
-  { value: 'slide-right', label: 'スライド→', icon: '→' },
-  { value: 'zoom', label: 'ズーム', icon: '⊕' },
-  { value: 'wipe', label: 'ワイプ', icon: '▶' },
-]
+export default function VideoPreview({
+  images,
+  audio,
+  editingPlan,
+  aspectRatio,
+  startTime,
+  endTime,
+}: Props) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const audioRef = useRef<HTMLAudioElement>(null)
+  const rendererRef = useRef<PreviewRenderer | null>(null)
+  const animationRef = useRef<number | null>(null)
+  
+  const [isPlaying, setIsPlaying] = useState(false)
+  // currentTimeは0からdurationまでの相対時間
+  const [currentTime, setCurrentTime] = useState(0)
+  const [isReady, setIsReady] = useState(false)
 
-const MOTION_OPTIONS = [
-  { value: 'static', label: '静止', icon: '•' },
-  { value: 'zoom-in', label: 'ズームイン', icon: '🔍+' },
-  { value: 'zoom-out', label: 'ズームアウト', icon: '🔍-' },
-  { value: 'pan-left', label: 'パン←', icon: '←' },
-  { value: 'pan-right', label: 'パン→', icon: '→' },
-]
+  const duration = endTime - startTime
 
-export default function TimelineView({ editingPlan, images, duration, onEditingPlanChange }: Props) {
-  const [editingClipIndex, setEditingClipIndex] = useState<number | null>(null)
+  // レンダラー初期化
+  useEffect(() => {
+    if (!canvasRef.current) return
 
-  const getTransitionIcon = (type: string) => {
-    const option = TRANSITION_OPTIONS.find(o => o.value === type)
-    return option?.icon || '•'
-  }
+    const renderer = new PreviewRenderer(canvasRef.current)
+    rendererRef.current = renderer
+    renderer.setAspectRatio(aspectRatio)
 
-  const getMotionLabel = (type: string) => {
-    const option = MOTION_OPTIONS.find(o => o.value === type)
-    return option?.icon || ''
-  }
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current)
+      }
+    }
+  }, [aspectRatio])
 
-  const handleTransitionChange = (clipIndex: number, newType: string) => {
-    if (!onEditingPlanChange) return
-    
-    const newClips = [...editingPlan.clips]
-    newClips[clipIndex] = {
-      ...newClips[clipIndex],
-      transition: {
-        ...newClips[clipIndex].transition,
-        type: newType,
-        duration: newType === 'none' || newType === 'cut' ? 0 : 0.3
+  // 画像とプランが変更されたら更新
+  useEffect(() => {
+    const init = async () => {
+      if (!rendererRef.current || images.length === 0) return
+      
+      setIsReady(false)
+      await rendererRef.current.setImages(images)
+      
+      if (editingPlan) {
+        rendererRef.current.setEditingPlan(editingPlan)
+        setIsReady(true)
+        // 初期フレームを描画（相対時間0秒）
+        rendererRef.current.renderFrame(0)
+        setCurrentTime(0)
       }
     }
     
-    onEditingPlanChange({
-      ...editingPlan,
-      clips: newClips
-    })
-  }
+    init()
+  }, [images, editingPlan])
 
-  const handleMotionChange = (clipIndex: number, newType: string) => {
-    if (!onEditingPlanChange) return
-    
-    const newClips = [...editingPlan.clips]
-    newClips[clipIndex] = {
-      ...newClips[clipIndex],
-      motion: {
-        ...newClips[clipIndex].motion,
-        type: newType
+  // 再生/一時停止
+  const togglePlay = useCallback(() => {
+    if (!audioRef.current || !isReady) return
+
+    if (isPlaying) {
+      audioRef.current.pause()
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current)
       }
+    } else {
+      // 音源の再生位置は startTime + currentTime（絶対位置）
+      audioRef.current.currentTime = startTime + currentTime
+      audioRef.current.play()
+      
+      const startPlayTime = performance.now()
+      const startVideoTime = currentTime
+
+      const animate = () => {
+        const elapsed = (performance.now() - startPlayTime) / 1000
+        const newTime = startVideoTime + elapsed
+
+        if (newTime >= duration) {
+          // 終了
+          setCurrentTime(0)
+          setIsPlaying(false)
+          audioRef.current?.pause()
+          rendererRef.current?.renderFrame(0)
+          return
+        }
+
+        setCurrentTime(newTime)
+        rendererRef.current?.renderFrame(newTime)
+        animationRef.current = requestAnimationFrame(animate)
+      }
+
+      animationRef.current = requestAnimationFrame(animate)
+    }
+
+    setIsPlaying(!isPlaying)
+  }, [isPlaying, currentTime, startTime, duration, isReady])
+
+  // シーク
+  const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const time = parseFloat(e.target.value)
+    setCurrentTime(time)
+    
+    if (audioRef.current) {
+      // 音源の再生位置は startTime + time（絶対位置）
+      audioRef.current.currentTime = startTime + time
     }
     
-    onEditingPlanChange({
-      ...editingPlan,
-      clips: newClips
-    })
+    if (rendererRef.current && isReady) {
+      rendererRef.current.renderFrame(time)
+    }
+  }, [isReady, startTime])
+
+  // 時間フォーマット
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.floor(seconds % 60)
+    return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
+
+  // アスペクト比に応じたコンテナスタイル
+  const getContainerStyle = () => {
+    const { width, height } = RESOLUTIONS[aspectRatio]
+    const aspect = width / height
+    
+    if (aspect > 1) {
+      // 横長
+      return 'aspect-video max-w-full'
+    } else if (aspect < 1) {
+      // 縦長
+      return 'aspect-[9/16] max-h-[500px]'
+    } else {
+      // 正方形
+      return 'aspect-square max-h-[400px]'
+    }
   }
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">🎬 タイムライン</h3>
-        <div className="text-sm text-gray-500">
-          {editingPlan.clips.length}クリップ / {duration.toFixed(1)}秒
-        </div>
+        <h3 className="text-lg font-semibold text-gray-900">🎬 プレビュー</h3>
+        {editingPlan && (
+          <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
+            AI分析済み
+          </span>
+        )}
       </div>
 
-      {/* ムードとタイトル */}
-      <div className="mb-4 p-3 bg-primary-50 rounded-lg">
-        <p className="text-sm text-primary-800">
-          <span className="font-medium">ムード:</span> {editingPlan.overallMood}
-          <span className="mx-2">|</span>
-          <span className="font-medium">タイトル案:</span> {editingPlan.suggestedTitle}
-        </p>
-      </div>
-
-      {/* タイムラインバー */}
-      <div className="relative">
-        <div className="flex h-24 bg-gray-100 rounded-lg overflow-hidden">
-          {editingPlan.clips.map((clip, index) => {
-            const width = ((clip.endTime - clip.startTime) / duration) * 100
-            const image = images[clip.imageIndex]
-
-            return (
-              <div
-                key={index}
-                className="relative group cursor-pointer"
-                style={{ width: `${width}%` }}
-                onClick={() => setEditingClipIndex(editingClipIndex === index ? null : index)}
-              >
-                {/* 画像サムネイル */}
-                <div className={`h-full relative overflow-hidden border-r border-white/50 ${editingClipIndex === index ? 'ring-2 ring-primary-500' : ''}`}>
-                  {image && (
-                    <img
-                      src={image.preview}
-                      alt={`Clip ${index + 1}`}
-                      className="w-full h-full object-cover"
-                    />
-                  )}
-                  
-                  {/* オーバーレイ情報 */}
-                  <div className="absolute inset-0 bg-black/30 flex flex-col justify-between p-1.5">
-                    {/* 上部: クリップ番号とモーション */}
-                    <div className="flex justify-between items-start">
-                      <span className="bg-black/60 text-white text-xs px-1.5 py-0.5 rounded">
-                        {index + 1}
-                      </span>
-                      <span className="bg-blue-500/80 text-white text-xs px-1.5 py-0.5 rounded">
-                        {getMotionLabel(clip.motion.type)}
-                      </span>
-                    </div>
-                    
-                    {/* 下部: 時間情報 */}
-                    <div className="text-white text-xs text-center">
-                      {clip.startTime.toFixed(1)}s - {clip.endTime.toFixed(1)}s
-                    </div>
-                  </div>
-                </div>
-
-                {/* トランジション表示 */}
-                {index < editingPlan.clips.length - 1 && (
-                  <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 z-10">
-                    <div className={`w-6 h-6 rounded-full shadow-md flex items-center justify-center text-xs border ${
-                      clip.transition.type === 'none' ? 'bg-gray-300 border-gray-400' : 'bg-white border-gray-200'
-                    }`}>
-                      {getTransitionIcon(clip.transition.type)}
-                    </div>
-                  </div>
-                )}
-
-                {/* ホバー時の詳細 */}
-                <div className="absolute inset-x-0 bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
-                  <div className="bg-gray-900 text-white text-xs rounded-lg p-2 mx-1 shadow-lg">
-                    <div><strong>画像:</strong> {image?.name || `Image ${clip.imageIndex + 1}`}</div>
-                    <div><strong>トランジション:</strong> {clip.transition.type} ({clip.transition.duration}s)</div>
-                    <div><strong>モーション:</strong> {clip.motion.type} (強度: {clip.motion.intensity})</div>
-                    <div className="mt-1 text-yellow-300">クリックして編集</div>
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-
-        {/* タイムスケール */}
-        <div className="flex justify-between mt-2 text-xs text-gray-500">
-          <span>0:00</span>
-          <span>{formatTime(duration / 4)}</span>
-          <span>{formatTime(duration / 2)}</span>
-          <span>{formatTime(duration * 3 / 4)}</span>
-          <span>{formatTime(duration)}</span>
-        </div>
-      </div>
-
-      {/* 選択中のクリップ編集パネル */}
-      {editingClipIndex !== null && onEditingPlanChange && (
-        <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-          <div className="flex items-center justify-between mb-3">
-            <h4 className="font-medium text-gray-900">
-              クリップ {editingClipIndex + 1} を編集
-            </h4>
-            <button
-              onClick={() => setEditingClipIndex(null)}
-              className="text-gray-400 hover:text-gray-600"
-            >
-              ✕
-            </button>
+      {/* キャンバスコンテナ */}
+      <div className={`relative bg-gray-900 rounded-xl overflow-hidden mx-auto ${getContainerStyle()}`}>
+        {!editingPlan ? (
+          // プレースホルダー
+          <div className="absolute inset-0 flex items-center justify-center text-gray-500">
+            <div className="text-center p-8">
+              <span className="text-4xl mb-2 block">🎥</span>
+              <p className="text-sm">
+                {images.length === 0 
+                  ? '画像をアップロードしてください'
+                  : 'AI分析を実行するとプレビューが表示されます'}
+              </p>
+            </div>
           </div>
-          
-          <div className="grid grid-cols-2 gap-4">
-            {/* トランジション選択 */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                トランジション
-              </label>
-              <select
-                value={editingPlan.clips[editingClipIndex].transition.type}
-                onChange={(e) => handleTransitionChange(editingClipIndex, e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              >
-                {TRANSITION_OPTIONS.map(option => (
-                  <option key={option.value} value={option.value} className="text-gray-900 bg-white">
-                    {option.icon} {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+        ) : (
+          <canvas
+            ref={canvasRef}
+            className="w-full h-full object-contain"
+          />
+        )}
 
-            {/* モーション選択 */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                モーション
-              </label>
-              <select
-                value={editingPlan.clips[editingClipIndex].motion.type}
-                onChange={(e) => handleMotionChange(editingClipIndex, e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              >
-                {MOTION_OPTIONS.map(option => (
-                  <option key={option.value} value={option.value} className="text-gray-900 bg-white">
-                    {option.icon} {option.label}
-                  </option>
-                ))}
-              </select>
+        {/* ローディングオーバーレイ */}
+        {editingPlan && !isReady && (
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+            <div className="text-white text-center">
+              <svg className="animate-spin h-8 w-8 mx-auto mb-2" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <p className="text-sm">プレビューを準備中...</p>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* コントロール */}
+      {editingPlan && isReady && (
+        <div className="mt-4 space-y-3">
+          {/* 再生コントロール */}
+          <div className="flex items-center gap-4">
+            <button
+              onClick={togglePlay}
+              className="w-12 h-12 bg-primary-600 text-white rounded-full flex items-center justify-center hover:bg-primary-700 transition-colors"
+            >
+              {isPlaying ? '⏸' : '▶'}
+            </button>
+            <div className="flex-1">
+              <div className="flex justify-between text-sm text-gray-600 mb-1">
+                <span>{formatTime(currentTime)}</span>
+                <span>{formatTime(duration)}</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={duration}
+                step={0.1}
+                value={currentTime}
+                onChange={handleSeek}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
+              />
+            </div>
+          </div>
+
+          {/* クリップ情報 */}
+          <div className="flex gap-2 overflow-x-auto pb-2">
+            {editingPlan.clips.map((clip, index) => {
+              const isActive = currentTime >= clip.startTime && currentTime < clip.endTime
+              const clipDuration = clip.endTime - clip.startTime
+              return (
+                <button
+                  key={index}
+                  onClick={() => {
+                    setCurrentTime(clip.startTime)
+                    rendererRef.current?.renderFrame(clip.startTime)
+                  }}
+                  className={`flex-shrink-0 px-3 py-2 rounded-lg text-xs transition-colors ${
+                    isActive
+                      ? 'bg-primary-100 text-primary-700 border-2 border-primary-500'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  <div className="font-medium">画像 {clip.imageIndex + 1}</div>
+                  <div className="text-gray-500">{clipDuration.toFixed(1)}秒</div>
+                </button>
+              )
+            })}
           </div>
         </div>
       )}
 
-      {/* クリップ詳細リスト */}
-      <div className="mt-6 space-y-2">
-        <h4 className="text-sm font-medium text-gray-700 mb-2">クリップ詳細</h4>
-        <div className="max-h-48 overflow-y-auto space-y-1">
-          {editingPlan.clips.map((clip, index) => {
-            const image = images[clip.imageIndex]
-            return (
-              <div 
-                key={index}
-                className={`flex items-center gap-3 p-2 rounded-lg text-sm cursor-pointer transition-colors ${
-                  editingClipIndex === index 
-                    ? 'bg-primary-100 border border-primary-300' 
-                    : 'bg-gray-50 hover:bg-gray-100'
-                }`}
-                onClick={() => setEditingClipIndex(editingClipIndex === index ? null : index)}
-              >
-                <div className="w-12 h-12 rounded overflow-hidden flex-shrink-0">
-                  {image && (
-                    <img 
-                      src={image.preview} 
-                      alt="" 
-                      className="w-full h-full object-cover" 
-                    />
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-gray-900 truncate">
-                    {image?.name || `画像 ${clip.imageIndex + 1}`}
-                  </div>
-                  <div className="text-gray-500 text-xs">
-                    {formatTime(clip.startTime)} - {formatTime(clip.endTime)}
-                    <span className="mx-1">•</span>
-                    {clip.motion.type}
-                    <span className="mx-1">•</span>
-                    → {clip.transition.type === 'none' ? 'エフェクトなし' : clip.transition.type}
-                  </div>
-                </div>
-                <div className="text-gray-400">
-                  ✎
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
+      {/* 非表示のオーディオ要素 */}
+      {audio && (
+        <audio
+          ref={audioRef}
+          src={audio.url}
+          preload="auto"
+          style={{ display: 'none' }}
+        />
+      )}
     </div>
   )
-}
-
-function formatTime(seconds: number): string {
-  const mins = Math.floor(seconds / 60)
-  const secs = Math.floor(seconds % 60)
-  return `${mins}:${secs.toString().padStart(2, '0')}`
 }
