@@ -174,9 +174,15 @@ export function useVideoAnalysis() {
     })
   }, [])
 
+  // 編集計画を更新
+  const setEditingPlan = useCallback((plan: EditingPlan) => {
+    setState(prev => ({ ...prev, editingPlan: plan }))
+  }, [])
+
   return {
     ...state,
     runFullAnalysis,
     reset,
+    setEditingPlan,
   }
 }

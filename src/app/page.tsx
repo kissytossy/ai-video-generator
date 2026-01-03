@@ -30,6 +30,7 @@ export default function Home() {
     error,
     runFullAnalysis,
     reset,
+    setEditingPlan,
   } = useVideoAnalysis()
 
   const canGenerate = images.length >= 2 && audio !== null
