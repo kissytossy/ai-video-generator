@@ -189,11 +189,11 @@ export default function Home() {
               <select 
                 value={fps}
                 onChange={(e) => setFps(Number(e.target.value))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               >
-                <option value={30}>30 FPS（推奨）</option>
-                <option value={24}>24 FPS（映画風）</option>
-                <option value={60}>60 FPS（滑らか）</option>
+                <option value={30} className="text-gray-900 bg-white">30 FPS（推奨）</option>
+                <option value={24} className="text-gray-900 bg-white">24 FPS（映画風）</option>
+                <option value={60} className="text-gray-900 bg-white">60 FPS（滑らか）</option>
               </select>
             </div>
 
