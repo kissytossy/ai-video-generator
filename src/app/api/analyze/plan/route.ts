@@ -118,14 +118,14 @@ ${suggestedSwitchPoints.map((t, i) => i < imageCount ? `画像${i + 1}: ${t.toFi
 1. imageIndexは0から${imageCount - 1}の範囲
 2. クリップは${imageCount}個
 3. **各クリップの長さは異なること**（±0.5秒以上の差をつける）
-4. トランジション: fade, cut, dissolve, slide-left, slide-right, zoom
+4. トランジション: cut（デフォルト）, fade, dissolve, slide-left, slide-right, zoom
 5. モーション: zoom-in, zoom-out, pan-left, pan-right, static
 
 ## 出力（JSONのみ）
 
 {
   "clips": [
-    {"imageIndex": 0, "startTime": 0, "endTime": ${suggestedSwitchPoints[1]?.toFixed(2) || (duration/imageCount).toFixed(2)}, "transition": {"type": "fade", "duration": 0.3}, "motion": {"type": "zoom-in", "intensity": 0.1}},
+    {"imageIndex": 0, "startTime": 0, "endTime": ${suggestedSwitchPoints[1]?.toFixed(2) || (duration/imageCount).toFixed(2)}, "transition": {"type": "cut", "duration": 0}, "motion": {"type": "zoom-in", "intensity": 0.15}},
     ...残りのクリップ
   ],
   "overallMood": "雰囲気",
@@ -227,7 +227,7 @@ function generateSimplePlan(
   }
   switchPoints.push(duration)
   
-  const transitions = ['fade', 'cut', 'slide-left', 'dissolve']
+  const transitions = ['cut', 'cut', 'cut', 'cut']
   const motions = ['zoom-in', 'zoom-out', 'pan-left', 'pan-right']
   
   for (let i = 0; i < imageCount; i++) {
@@ -236,12 +236,12 @@ function generateSimplePlan(
       startTime: switchPoints[i],
       endTime: switchPoints[i + 1],
       transition: {
-        type: i === 0 ? 'fade' : transitions[i % transitions.length],
-        duration: 0.3,
+        type: 'cut',
+        duration: 0,
       },
       motion: {
         type: motions[i % motions.length],
-        intensity: 0.1,
+        intensity: 0.15,
       },
     })
   }

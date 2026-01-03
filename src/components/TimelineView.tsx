@@ -46,12 +46,31 @@ export default function TimelineView({ editingPlan, images, duration, onEditingP
     if (!onEditingPlanChange) return
     
     const newClips = [...editingPlan.clips]
+    const currentDuration = newClips[clipIndex].transition.duration
     newClips[clipIndex] = {
       ...newClips[clipIndex],
       transition: {
         ...newClips[clipIndex].transition,
         type: newType,
-        duration: newType === 'none' || newType === 'cut' ? 0 : 0.3
+        duration: newType === 'none' || newType === 'cut' ? 0 : (currentDuration > 0 ? currentDuration : 0.5)
+      }
+    }
+    
+    onEditingPlanChange({
+      ...editingPlan,
+      clips: newClips
+    })
+  }
+
+  const handleTransitionDurationChange = (clipIndex: number, newDuration: number) => {
+    if (!onEditingPlanChange) return
+    
+    const newClips = [...editingPlan.clips]
+    newClips[clipIndex] = {
+      ...newClips[clipIndex],
+      transition: {
+        ...newClips[clipIndex].transition,
+        duration: newDuration
       }
     }
     
@@ -72,6 +91,42 @@ export default function TimelineView({ editingPlan, images, duration, onEditingP
         type: newType
       }
     }
+    
+    onEditingPlanChange({
+      ...editingPlan,
+      clips: newClips
+    })
+  }
+
+  // 一括適用: トランジション
+  const handleApplyTransitionToAll = (transitionType: string, transitionDuration: number) => {
+    if (!onEditingPlanChange) return
+    
+    const newClips = editingPlan.clips.map(clip => ({
+      ...clip,
+      transition: {
+        type: transitionType,
+        duration: transitionType === 'none' || transitionType === 'cut' ? 0 : transitionDuration
+      }
+    }))
+    
+    onEditingPlanChange({
+      ...editingPlan,
+      clips: newClips
+    })
+  }
+
+  // 一括適用: モーション
+  const handleApplyMotionToAll = (motionType: string) => {
+    if (!onEditingPlanChange) return
+    
+    const newClips = editingPlan.clips.map(clip => ({
+      ...clip,
+      motion: {
+        ...clip.motion,
+        type: motionType
+      }
+    }))
     
     onEditingPlanChange({
       ...editingPlan,
@@ -190,7 +245,7 @@ export default function TimelineView({ editingPlan, images, duration, onEditingP
             </button>
           </div>
           
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             {/* トランジション選択 */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -209,6 +264,26 @@ export default function TimelineView({ editingPlan, images, duration, onEditingP
               </select>
             </div>
 
+            {/* トランジション時間 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                切替時間
+              </label>
+              <select
+                value={editingPlan.clips[editingClipIndex].transition.duration}
+                onChange={(e) => handleTransitionDurationChange(editingClipIndex, parseFloat(e.target.value))}
+                disabled={editingPlan.clips[editingClipIndex].transition.type === 'none' || editingPlan.clips[editingClipIndex].transition.type === 'cut'}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:bg-gray-100 disabled:text-gray-400"
+              >
+                <option value={0.3} className="text-gray-900 bg-white">0.3秒</option>
+                <option value={0.5} className="text-gray-900 bg-white">0.5秒</option>
+                <option value={0.8} className="text-gray-900 bg-white">0.8秒</option>
+                <option value={1.0} className="text-gray-900 bg-white">1.0秒</option>
+                <option value={1.5} className="text-gray-900 bg-white">1.5秒</option>
+                <option value={2.0} className="text-gray-900 bg-white">2.0秒</option>
+              </select>
+            </div>
+
             {/* モーション選択 */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -221,6 +296,83 @@ export default function TimelineView({ editingPlan, images, duration, onEditingP
               >
                 {MOTION_OPTIONS.map(option => (
                   <option key={option.value} value={option.value} className="text-gray-900 bg-white">
+                    {option.icon} {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 一括適用パネル */}
+      {onEditingPlanChange && (
+        <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+          <h4 className="font-medium text-blue-900 mb-3">📋 全クリップに一括適用</h4>
+          <div className="grid grid-cols-3 gap-3">
+            {/* トランジション一括 */}
+            <div>
+              <label className="block text-xs font-medium text-blue-700 mb-1">トランジション</label>
+              <select
+                onChange={(e) => {
+                  if (e.target.value) {
+                    handleApplyTransitionToAll(e.target.value, 0.5)
+                    e.target.value = ''
+                  }
+                }}
+                defaultValue=""
+                className="w-full px-2 py-1.5 border border-blue-300 rounded text-sm bg-white text-gray-900 focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="" disabled>選択...</option>
+                {TRANSITION_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value} className="text-gray-900">
+                    {option.icon} {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 切替時間一括 */}
+            <div>
+              <label className="block text-xs font-medium text-blue-700 mb-1">切替時間</label>
+              <select
+                onChange={(e) => {
+                  if (e.target.value) {
+                    const duration = parseFloat(e.target.value)
+                    const currentType = editingPlan.clips[0]?.transition.type || 'cut'
+                    handleApplyTransitionToAll(currentType, duration)
+                    e.target.value = ''
+                  }
+                }}
+                defaultValue=""
+                className="w-full px-2 py-1.5 border border-blue-300 rounded text-sm bg-white text-gray-900 focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="" disabled>選択...</option>
+                <option value="0.3" className="text-gray-900">0.3秒</option>
+                <option value="0.5" className="text-gray-900">0.5秒</option>
+                <option value="0.8" className="text-gray-900">0.8秒</option>
+                <option value="1.0" className="text-gray-900">1.0秒</option>
+                <option value="1.5" className="text-gray-900">1.5秒</option>
+                <option value="2.0" className="text-gray-900">2.0秒</option>
+              </select>
+            </div>
+
+            {/* モーション一括 */}
+            <div>
+              <label className="block text-xs font-medium text-blue-700 mb-1">モーション</label>
+              <select
+                onChange={(e) => {
+                  if (e.target.value) {
+                    handleApplyMotionToAll(e.target.value)
+                    e.target.value = ''
+                  }
+                }}
+                defaultValue=""
+                className="w-full px-2 py-1.5 border border-blue-300 rounded text-sm bg-white text-gray-900 focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="" disabled>選択...</option>
+                {MOTION_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value} className="text-gray-900">
                     {option.icon} {option.label}
                   </option>
                 ))}
