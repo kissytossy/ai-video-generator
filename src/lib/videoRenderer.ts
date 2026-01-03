@@ -120,7 +120,8 @@ export function drawTransition(
 
   switch (transitionType) {
     case 'fade':
-      // フェードイン/アウト
+    case 'dissolve':
+      // フェードイン/アウト（dissolveはfadeと同じ）
       if (imgFrom) {
         ctx.globalAlpha = 1 - progress
         drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
@@ -130,38 +131,67 @@ export function drawTransition(
       break
 
     case 'slide':
-      // スライド
-      const slideDirection = direction || 'left'
+    case 'slide-left':
+      // スライド（左方向）
       if (imgFrom) {
-        let fromX = 0, fromY = 0
-        let toX = 0, toY = 0
-        
-        switch (slideDirection) {
-          case 'left':
-            fromX = -canvasWidth * progress
-            toX = canvasWidth * (1 - progress)
-            break
-          case 'right':
-            fromX = canvasWidth * progress
-            toX = -canvasWidth * (1 - progress)
-            break
-          case 'up':
-            fromY = -canvasHeight * progress
-            toY = canvasHeight * (1 - progress)
-            break
-          case 'down':
-            fromY = canvasHeight * progress
-            toY = -canvasHeight * (1 - progress)
-            break
-        }
-        
         ctx.save()
-        ctx.translate(fromX, fromY)
+        ctx.translate(-canvasWidth * progress, 0)
         drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
         ctx.restore()
         
         ctx.save()
-        ctx.translate(toX, toY)
+        ctx.translate(canvasWidth * (1 - progress), 0)
+        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+        ctx.restore()
+      } else {
+        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+      }
+      break
+
+    case 'slide-right':
+      // スライド（右方向）
+      if (imgFrom) {
+        ctx.save()
+        ctx.translate(canvasWidth * progress, 0)
+        drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
+        ctx.restore()
+        
+        ctx.save()
+        ctx.translate(-canvasWidth * (1 - progress), 0)
+        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+        ctx.restore()
+      } else {
+        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+      }
+      break
+
+    case 'slide-up':
+      // スライド（上方向）
+      if (imgFrom) {
+        ctx.save()
+        ctx.translate(0, -canvasHeight * progress)
+        drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
+        ctx.restore()
+        
+        ctx.save()
+        ctx.translate(0, canvasHeight * (1 - progress))
+        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+        ctx.restore()
+      } else {
+        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+      }
+      break
+
+    case 'slide-down':
+      // スライド（下方向）
+      if (imgFrom) {
+        ctx.save()
+        ctx.translate(0, canvasHeight * progress)
+        drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
+        ctx.restore()
+        
+        ctx.save()
+        ctx.translate(0, -canvasHeight * (1 - progress))
         drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
         ctx.restore()
       } else {
@@ -178,6 +208,28 @@ export function drawTransition(
       ctx.beginPath()
       ctx.rect(0, 0, canvasWidth * progress, canvasHeight)
       ctx.clip()
+      drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+      ctx.restore()
+      break
+
+    case 'zoom':
+      // ズームトランジション
+      if (imgFrom) {
+        ctx.globalAlpha = 1 - progress
+        const scaleFrom = 1 + progress * 0.2
+        ctx.save()
+        ctx.translate(canvasWidth / 2, canvasHeight / 2)
+        ctx.scale(scaleFrom, scaleFrom)
+        ctx.translate(-canvasWidth / 2, -canvasHeight / 2)
+        drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
+        ctx.restore()
+      }
+      ctx.globalAlpha = progress
+      const scaleTo = 1.2 - progress * 0.2
+      ctx.save()
+      ctx.translate(canvasWidth / 2, canvasHeight / 2)
+      ctx.scale(scaleTo, scaleTo)
+      ctx.translate(-canvasWidth / 2, -canvasHeight / 2)
       drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
       ctx.restore()
       break
@@ -370,6 +422,7 @@ export class VideoGenerator {
       // フレームを描画
       ctx.fillStyle = '#000'
       ctx.fillRect(0, 0, width, height)
+
       const clips = editingPlan.clips
       let currentClipIndex = clips.findIndex(
         clip => currentTime >= clip.startTime && currentTime < clip.endTime
@@ -441,16 +494,19 @@ export class VideoGenerator {
     onProgress?.('動画をエンコード中...', 75)
 
     // FFmpegで動画生成
+    // -ss は音源の入力ファイルの前に置いて、指定位置から開始
     await this.ffmpeg.exec([
       '-framerate', String(fps),
       '-i', 'frame%06d.png',
       '-ss', String(startTime),
-      '-t', String(duration),
       '-i', 'audio.mp3',
+      '-t', String(duration),
       '-c:v', 'libx264',
       '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
       '-b:a', '192k',
+      '-map', '0:v:0',
+      '-map', '1:a:0',
       '-shortest',
       '-y',
       'output.mp4'
