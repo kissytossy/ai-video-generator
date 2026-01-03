@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-
 import { callClaude, EDITING_PLAN_PROMPT } from '@/lib/claude'
 
 export const runtime = 'nodejs'
@@ -72,6 +71,27 @@ export async function POST(request: NextRequest) {
       .filter(b => b.strength === 'strong' && b.time <= duration)
       .map(b => b.time)
     
+    // 切り替えポイント候補をstrongビートから選択
+    const suggestedSwitchPoints = [0]
+    if (strongBeats.length > imageCount) {
+      // strongビートからランダムに選んで不均等にする
+      const step = strongBeats.length / imageCount
+      for (let i = 1; i < imageCount; i++) {
+        // 少しずらして不均等に
+        const baseIndex = Math.floor(i * step)
+        const offset = (i % 2 === 0) ? -1 : 1
+        const index = Math.max(0, Math.min(strongBeats.length - 1, baseIndex + offset))
+        suggestedSwitchPoints.push(strongBeats[index])
+      }
+    } else {
+      // strongビートが少ない場合は不均等に分割
+      for (let i = 1; i < imageCount; i++) {
+        const ratio = i / imageCount + (i % 2 === 0 ? 0.05 : -0.05)
+        suggestedSwitchPoints.push(duration * ratio)
+      }
+    }
+    suggestedSwitchPoints.push(duration)
+    
     // Claude APIで編集計画を生成
     const prompt = `
 あなたは動画編集のプロフェッショナルです。音楽に合わせた動画編集計画を作成してください。
@@ -88,43 +108,29 @@ ${imageAnalyses.map((img, i) => `画像${i + 1}: ${img.scene}, ${img.mood}, 強�
 - エネルギー: ${audioAnalysis.energy}/10
 - 動画の長さ: ${duration.toFixed(1)}秒
 
-### strongビートの位置（秒）
-${strongBeats.slice(0, 30).map(t => t.toFixed(2)).join(', ')}${strongBeats.length > 30 ? '...' : ''}
+### 推奨切り替えタイミング（strongビート基準）
+${suggestedSwitchPoints.map((t, i) => i < imageCount ? `画像${i + 1}: ${t.toFixed(2)}秒から` : '').filter(s => s).join('\n')}
 
-## 重要なルール
+**重要**: 上記の切り替えタイミングを参考にしてください。各クリップの長さは**必ず異なる**ようにしてください。均等分割は禁止です。
 
-1. **画像は${imageCount}枚のみ使用**してください。imageIndexは0から${imageCount - 1}の範囲です。
-2. **クリップの数は${imageCount}個**にしてください（画像1枚につき1クリップ）。
-3. **切り替えタイミングは曲調に合わせて**ください：
-   - strongビートの位置で切り替えると自然です
-   - 激しい部分は短く、穏やかな部分は長くしてください
-   - 各クリップの長さは異なってOKです
-4. **トランジション**は曲調に合わせて選んでください：
-   - 激しい部分: cut（瞬時切り替え）
-   - 穏やかな部分: fade, dissolve
-   - 動きのある部分: slide-left, slide-right, zoom
-5. **モーション**も曲調に合わせてください：
-   - エネルギッシュな部分: zoom-in, pan-left, pan-right
-   - 落ち着いた部分: static, zoom-out
+## ルール
 
-## 出力形式（必ずこのJSON形式で）
+1. imageIndexは0から${imageCount - 1}の範囲
+2. クリップは${imageCount}個
+3. **各クリップの長さは異なること**（±0.5秒以上の差をつける）
+4. トランジション: fade, cut, dissolve, slide-left, slide-right, zoom
+5. モーション: zoom-in, zoom-out, pan-left, pan-right, static
+
+## 出力（JSONのみ）
 
 {
   "clips": [
-    {
-      "imageIndex": 0,
-      "startTime": 0,
-      "endTime": （曲調に合わせた秒数）,
-      "transition": { "type": "fade", "duration": 0.3 },
-      "motion": { "type": "zoom-in", "intensity": 0.1 }
-    },
-    ...
+    {"imageIndex": 0, "startTime": 0, "endTime": ${suggestedSwitchPoints[1]?.toFixed(2) || (duration/imageCount).toFixed(2)}, "transition": {"type": "fade", "duration": 0.3}, "motion": {"type": "zoom-in", "intensity": 0.1}},
+    ...残りのクリップ
   ],
-  "overallMood": "（全体の雰囲気）",
-  "suggestedTitle": "（タイトル案）"
-}
-
-JSONのみを出力してください。説明は不要です。`
+  "overallMood": "雰囲気",
+  "suggestedTitle": "タイトル"
+}`
 
     let editingPlan: EditingPlan
 
