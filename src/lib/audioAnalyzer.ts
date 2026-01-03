@@ -14,7 +14,7 @@ export interface AudioSection {
 
 export interface AudioHighlight {
   time: number
-  type: 'drop' | 'climax' | 'transition'
+  type: 'drop' | 'climax' | 'transition' | 'buildup' | 'fillin'
   intensity: number
 }
 
@@ -222,7 +222,7 @@ function detectSections(
   return sections
 }
 
-// ハイライト検出
+// ハイライト検出（強化版：フィルイン・ビルドアップ検出）
 function detectHighlights(
   data: Float32Array, 
   sampleRate: number,
@@ -254,7 +254,7 @@ function detectHighlights(
     smoothed.push(sum / count)
   }
   
-  // 急激なエネルギー上昇を検出
+  // 急激なエネルギー上昇を検出（ドロップ・トランジション）
   for (let i = 1; i < smoothed.length - 1; i++) {
     const prevEnergy = smoothed[i - 1]
     const currentEnergy = smoothed[i]
@@ -267,6 +267,64 @@ function detectHighlights(
         type: increase > 0.2 ? 'drop' : 'transition',
         intensity: Math.min(10, Math.round(increase * 50)),
       })
+    }
+  }
+  
+  // ビート密度変化を検出（フィルイン・ビルドアップ）
+  // 短いフレームでエネルギー変動の頻度を計算
+  const shortFrameSize = Math.floor(sampleRate * 0.05) // 50ms
+  const shortHopSize = Math.floor(shortFrameSize / 2)
+  const shortEnergies: number[] = []
+  
+  for (let i = 0; i < data.length - shortFrameSize; i += shortHopSize) {
+    let energy = 0
+    for (let j = 0; j < shortFrameSize; j++) {
+      energy += Math.abs(data[i + j])
+    }
+    shortEnergies.push(energy / shortFrameSize)
+  }
+  
+  // 1秒ごとの「変動率」を計算（フィルインは変動が多い）
+  const framesPerSecond = Math.floor(sampleRate / shortHopSize)
+  const variationRates: { time: number; rate: number }[] = []
+  
+  for (let sec = 0; sec < Math.floor(data.length / sampleRate) - 1; sec++) {
+    const startFrame = sec * framesPerSecond
+    const endFrame = Math.min((sec + 1) * framesPerSecond, shortEnergies.length)
+    
+    let variations = 0
+    for (let i = startFrame + 1; i < endFrame; i++) {
+      variations += Math.abs(shortEnergies[i] - shortEnergies[i - 1])
+    }
+    
+    variationRates.push({
+      time: offsetTime + sec,
+      rate: variations / (endFrame - startFrame)
+    })
+  }
+  
+  // 変動率の平均と標準偏差を計算
+  const avgVariation = variationRates.reduce((sum, v) => sum + v.rate, 0) / variationRates.length
+  const stdVariation = Math.sqrt(
+    variationRates.reduce((sum, v) => sum + Math.pow(v.rate - avgVariation, 2), 0) / variationRates.length
+  )
+  
+  // 平均より大幅に高い変動率をフィルイン/ビルドアップとして検出
+  for (const { time, rate } of variationRates) {
+    if (rate > avgVariation + stdVariation * 1.5) {
+      // 既存のハイライトと重複しなければ追加
+      const hasNearbyHighlight = highlights.some(h => Math.abs(h.time - time) < 1)
+      if (!hasNearbyHighlight) {
+        // 次の秒のエネルギーを見てビルドアップかフィルインか判定
+        const nextSecEnergy = smoothed[Math.min(Math.floor((time - offsetTime + 1) * 4), smoothed.length - 1)] || 0
+        const currentSecEnergy = smoothed[Math.floor((time - offsetTime) * 4)] || 0
+        
+        highlights.push({
+          time,
+          type: nextSecEnergy > currentSecEnergy * 1.2 ? 'buildup' : 'fillin',
+          intensity: Math.min(10, Math.round((rate - avgVariation) / stdVariation * 3)),
+        })
+      }
     }
   }
   

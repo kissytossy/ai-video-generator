@@ -54,7 +54,7 @@ export interface Section {
 
 export interface Highlight {
   time: number
-  type: 'drop' | 'climax' | 'breakdown' | 'transition'
+  type: 'drop' | 'climax' | 'breakdown' | 'transition' | 'buildup' | 'fillin'
   intensity: number
 }
 

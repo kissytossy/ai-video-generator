@@ -71,6 +71,11 @@ export async function POST(request: NextRequest) {
       .filter(b => b.strength === 'strong' && b.time <= duration)
       .map(b => b.time)
     
+    // ハイライト（曲調変化ポイント）を取得
+    const highlights = audioAnalysis.highlights
+      .filter(h => h.time <= duration)
+      .map(h => ({ time: h.time, type: h.type, intensity: h.intensity }))
+    
     // 切り替えポイント候補をstrongビートから選択
     const suggestedSwitchPoints = [0]
     if (strongBeats.length > imageCount) {
@@ -108,10 +113,20 @@ ${imageAnalyses.map((img, i) => `画像${i + 1}: ${img.scene}, ${img.mood}, 強�
 - エネルギー: ${audioAnalysis.energy}/10
 - 動画の長さ: ${duration.toFixed(1)}秒
 
+### 曲調変化ポイント（重要！）
+${highlights.length > 0 ? highlights.map(h => `${h.time.toFixed(1)}秒: ${h.type}（強度${h.intensity}）`).join('\n') : 'なし'}
+
+※ buildup/fillin = サビ直前のドラムフィル、盛り上がりへの導入
+※ drop/climax = サビ、最高潮のポイント
+※ これらのポイント付近で画像を切り替えると効果的です
+
 ### 推奨切り替えタイミング（strongビート基準）
 ${suggestedSwitchPoints.map((t, i) => i < imageCount ? `画像${i + 1}: ${t.toFixed(2)}秒から` : '').filter(s => s).join('\n')}
 
-**重要**: 上記の切り替えタイミングを参考にしてください。各クリップの長さは**必ず異なる**ようにしてください。均等分割は禁止です。
+**重要**: 
+- 曲調変化ポイント付近で画像を切り替えてください
+- 各クリップの長さは**必ず異なる**ようにしてください
+- 均等分割は禁止です
 
 ## ルール
 
