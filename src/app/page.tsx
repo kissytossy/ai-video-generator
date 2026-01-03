@@ -147,6 +147,7 @@ export default function Home() {
               editingPlan={editingPlan}
               images={images}
               duration={(endTime || audio?.duration || 0) - startTime}
+              onEditingPlanChange={setEditingPlan}
             />
           )}
 

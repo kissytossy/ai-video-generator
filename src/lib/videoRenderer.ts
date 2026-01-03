@@ -118,33 +118,51 @@ export function drawTransition(
 ) {
   ctx.save()
 
+  // progressを0-1の範囲にクランプ
+  const p = Math.max(0, Math.min(1, progress))
+
   switch (transitionType) {
     case 'fade':
-    case 'dissolve':
-      // フェードイン/アウト（dissolveはfadeと同じ）
+      // フェード - 前の画像がフェードアウトしながら次の画像がフェードイン
       if (imgFrom) {
-        ctx.globalAlpha = 1 - progress
-        drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
+        ctx.globalAlpha = 1
+        drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
+        ctx.globalAlpha = p
+        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
+      } else {
+        ctx.globalAlpha = p
+        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       }
-      ctx.globalAlpha = progress
-      drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+      break
+
+    case 'dissolve':
+      // ディゾルブ - クロスフェード（両方同時に変化）
+      if (imgFrom) {
+        ctx.globalAlpha = 1 - p
+        drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
+        ctx.globalAlpha = p
+        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
+      } else {
+        ctx.globalAlpha = p
+        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
+      }
       break
 
     case 'slide':
     case 'slide-left':
-      // スライド（左方向）
+      // スライド（左方向）- 画像を拡大して黒帯を防ぐ
       if (imgFrom) {
         ctx.save()
-        ctx.translate(-canvasWidth * progress, 0)
-        drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
+        ctx.translate(-canvasWidth * p, 0)
+        drawImageCoverScaled(ctx, imgFrom, canvasWidth, canvasHeight, 1.1)
         ctx.restore()
         
         ctx.save()
-        ctx.translate(canvasWidth * (1 - progress), 0)
-        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+        ctx.translate(canvasWidth * (1 - p), 0)
+        drawImageCoverScaled(ctx, imgTo, canvasWidth, canvasHeight, 1.1)
         ctx.restore()
       } else {
-        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       }
       break
 
@@ -152,16 +170,16 @@ export function drawTransition(
       // スライド（右方向）
       if (imgFrom) {
         ctx.save()
-        ctx.translate(canvasWidth * progress, 0)
-        drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
+        ctx.translate(canvasWidth * p, 0)
+        drawImageCoverScaled(ctx, imgFrom, canvasWidth, canvasHeight, 1.1)
         ctx.restore()
         
         ctx.save()
-        ctx.translate(-canvasWidth * (1 - progress), 0)
-        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+        ctx.translate(-canvasWidth * (1 - p), 0)
+        drawImageCoverScaled(ctx, imgTo, canvasWidth, canvasHeight, 1.1)
         ctx.restore()
       } else {
-        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       }
       break
 
@@ -169,16 +187,16 @@ export function drawTransition(
       // スライド（上方向）
       if (imgFrom) {
         ctx.save()
-        ctx.translate(0, -canvasHeight * progress)
-        drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
+        ctx.translate(0, -canvasHeight * p)
+        drawImageCoverScaled(ctx, imgFrom, canvasWidth, canvasHeight, 1.1)
         ctx.restore()
         
         ctx.save()
-        ctx.translate(0, canvasHeight * (1 - progress))
-        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+        ctx.translate(0, canvasHeight * (1 - p))
+        drawImageCoverScaled(ctx, imgTo, canvasWidth, canvasHeight, 1.1)
         ctx.restore()
       } else {
-        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       }
       break
 
@@ -186,62 +204,118 @@ export function drawTransition(
       // スライド（下方向）
       if (imgFrom) {
         ctx.save()
-        ctx.translate(0, canvasHeight * progress)
-        drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
+        ctx.translate(0, canvasHeight * p)
+        drawImageCoverScaled(ctx, imgFrom, canvasWidth, canvasHeight, 1.1)
         ctx.restore()
         
         ctx.save()
-        ctx.translate(0, -canvasHeight * (1 - progress))
-        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+        ctx.translate(0, -canvasHeight * (1 - p))
+        drawImageCoverScaled(ctx, imgTo, canvasWidth, canvasHeight, 1.1)
         ctx.restore()
       } else {
-        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       }
       break
 
     case 'wipe':
       // ワイプ
       if (imgFrom) {
-        drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
+        drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
       }
       ctx.save()
       ctx.beginPath()
-      ctx.rect(0, 0, canvasWidth * progress, canvasHeight)
+      ctx.rect(0, 0, canvasWidth * p, canvasHeight)
       ctx.clip()
-      drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+      drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       ctx.restore()
       break
 
     case 'zoom':
       // ズームトランジション
       if (imgFrom) {
-        ctx.globalAlpha = 1 - progress
-        const scaleFrom = 1 + progress * 0.2
+        ctx.globalAlpha = 1 - p
+        const scaleFrom = 1 + p * 0.3
         ctx.save()
         ctx.translate(canvasWidth / 2, canvasHeight / 2)
         ctx.scale(scaleFrom, scaleFrom)
         ctx.translate(-canvasWidth / 2, -canvasHeight / 2)
-        drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, 1, { type: 'static', intensity: 0 })
+        drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
         ctx.restore()
       }
-      ctx.globalAlpha = progress
-      const scaleTo = 1.2 - progress * 0.2
+      ctx.globalAlpha = p
+      const scaleTo = 1.3 - p * 0.3
       ctx.save()
       ctx.translate(canvasWidth / 2, canvasHeight / 2)
       ctx.scale(scaleTo, scaleTo)
       ctx.translate(-canvasWidth / 2, -canvasHeight / 2)
-      drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+      drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       ctx.restore()
       break
 
+    case 'none':
     case 'cut':
     default:
-      // カット（即座に切り替え）
-      drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, 0, { type: 'static', intensity: 0 })
+      // カット（即座に切り替え）/ エフェクトなし
+      drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       break
   }
 
   ctx.restore()
+}
+
+// 画像をキャンバスにカバーフィットで描画（シンプル版）
+function drawImageCover(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  canvasWidth: number,
+  canvasHeight: number
+) {
+  const imgAspect = img.width / img.height
+  const canvasAspect = canvasWidth / canvasHeight
+  
+  let drawWidth: number, drawHeight: number, offsetX: number, offsetY: number
+  
+  if (imgAspect > canvasAspect) {
+    drawHeight = canvasHeight
+    drawWidth = canvasHeight * imgAspect
+    offsetX = (canvasWidth - drawWidth) / 2
+    offsetY = 0
+  } else {
+    drawWidth = canvasWidth
+    drawHeight = canvasWidth / imgAspect
+    offsetX = 0
+    offsetY = (canvasHeight - drawHeight) / 2
+  }
+  
+  ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight)
+}
+
+// 画像をキャンバスにカバーフィットで描画（拡大版 - スライド用）
+function drawImageCoverScaled(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  canvasWidth: number,
+  canvasHeight: number,
+  scale: number
+) {
+  const imgAspect = img.width / img.height
+  const canvasAspect = canvasWidth / canvasHeight
+  
+  let drawWidth: number, drawHeight: number, offsetX: number, offsetY: number
+  
+  if (imgAspect > canvasAspect) {
+    drawHeight = canvasHeight * scale
+    drawWidth = drawHeight * imgAspect
+    offsetX = (canvasWidth - drawWidth) / 2
+    offsetY = (canvasHeight - drawHeight) / 2
+  } else {
+    drawWidth = canvasWidth * scale
+    drawHeight = drawWidth / imgAspect
+    offsetX = (canvasWidth - drawWidth) / 2
+    offsetY = (canvasHeight - drawHeight) / 2
+  }
+  
+  ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight)
 }
 
 // 画像をロード
@@ -489,18 +563,25 @@ export class VideoGenerator {
 
     // 音源を書き込み
     const audioData = await fetchFile(audioFile)
-    await this.ffmpeg.writeFile('audio.mp3', audioData)
+    await this.ffmpeg.writeFile('audio_full.mp3', audioData)
+
+    // 音源を指定範囲でトリミング
+    await this.ffmpeg.exec([
+      '-i', 'audio_full.mp3',
+      '-ss', String(startTime),
+      '-t', String(duration),
+      '-c:a', 'libmp3lame',
+      '-y',
+      'audio.mp3'
+    ])
 
     onProgress?.('動画をエンコード中...', 75)
 
-    // FFmpegで動画生成
-    // -ss は音源の入力ファイルの前に置いて、指定位置から開始
+    // FFmpegで動画生成（トリミング済み音源を使用）
     await this.ffmpeg.exec([
       '-framerate', String(fps),
       '-i', 'frame%06d.png',
-      '-ss', String(startTime),
       '-i', 'audio.mp3',
-      '-t', String(duration),
       '-c:v', 'libx264',
       '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
@@ -522,6 +603,7 @@ export class VideoGenerator {
       const frameName = `frame${String(frame).padStart(6, '0')}.png`
       await this.ffmpeg.deleteFile(frameName).catch(() => {})
     }
+    await this.ffmpeg.deleteFile('audio_full.mp3').catch(() => {})
     await this.ffmpeg.deleteFile('audio.mp3').catch(() => {})
     await this.ffmpeg.deleteFile('output.mp4').catch(() => {})
 

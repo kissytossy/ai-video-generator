@@ -86,7 +86,7 @@ export interface Clip {
 }
 
 export interface Transition {
-  type: 'fade' | 'cut' | 'slide' | 'zoom' | 'wipe' | 'blur'
+  type: 'none' | 'fade' | 'dissolve' | 'cut' | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down' | 'zoom' | 'wipe'
   duration: number
   direction?: 'left' | 'right' | 'up' | 'down'
 }
