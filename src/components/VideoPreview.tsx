@@ -27,7 +27,8 @@ export default function VideoPreview({
   const animationRef = useRef<number | null>(null)
   
   const [isPlaying, setIsPlaying] = useState(false)
-  const [currentTime, setCurrentTime] = useState(startTime)
+  // currentTimeは0からdurationまでの相対時間
+  const [currentTime, setCurrentTime] = useState(0)
   const [isReady, setIsReady] = useState(false)
 
   const duration = endTime - startTime
@@ -58,13 +59,14 @@ export default function VideoPreview({
       if (editingPlan) {
         rendererRef.current.setEditingPlan(editingPlan)
         setIsReady(true)
-        // 初期フレームを描画
-        rendererRef.current.renderFrame(startTime)
+        // 初期フレームを描画（相対時間0秒）
+        rendererRef.current.renderFrame(0)
+        setCurrentTime(0)
       }
     }
     
     init()
-  }, [images, editingPlan, startTime])
+  }, [images, editingPlan])
 
   // 再生/一時停止
   const togglePlay = useCallback(() => {
@@ -76,7 +78,8 @@ export default function VideoPreview({
         cancelAnimationFrame(animationRef.current)
       }
     } else {
-      audioRef.current.currentTime = currentTime
+      // 音源の再生位置は startTime + currentTime（絶対位置）
+      audioRef.current.currentTime = startTime + currentTime
       audioRef.current.play()
       
       const startPlayTime = performance.now()
@@ -86,12 +89,12 @@ export default function VideoPreview({
         const elapsed = (performance.now() - startPlayTime) / 1000
         const newTime = startVideoTime + elapsed
 
-        if (newTime >= endTime) {
+        if (newTime >= duration) {
           // 終了
-          setCurrentTime(startTime)
+          setCurrentTime(0)
           setIsPlaying(false)
           audioRef.current?.pause()
-          rendererRef.current?.renderFrame(startTime)
+          rendererRef.current?.renderFrame(0)
           return
         }
 
@@ -104,7 +107,7 @@ export default function VideoPreview({
     }
 
     setIsPlaying(!isPlaying)
-  }, [isPlaying, currentTime, startTime, endTime, isReady])
+  }, [isPlaying, currentTime, startTime, duration, isReady])
 
   // シーク
   const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -112,13 +115,14 @@ export default function VideoPreview({
     setCurrentTime(time)
     
     if (audioRef.current) {
-      audioRef.current.currentTime = time
+      // 音源の再生位置は startTime + time（絶対位置）
+      audioRef.current.currentTime = startTime + time
     }
     
     if (rendererRef.current && isReady) {
       rendererRef.current.renderFrame(time)
     }
-  }, [isReady])
+  }, [isReady, startTime])
 
   // 時間フォーマット
   const formatTime = (seconds: number) => {
@@ -203,13 +207,13 @@ export default function VideoPreview({
             </button>
             <div className="flex-1">
               <div className="flex justify-between text-sm text-gray-600 mb-1">
-                <span>{formatTime(currentTime - startTime)}</span>
+                <span>{formatTime(currentTime)}</span>
                 <span>{formatTime(duration)}</span>
               </div>
               <input
                 type="range"
-                min={startTime}
-                max={endTime}
+                min={0}
+                max={duration}
                 step={0.1}
                 value={currentTime}
                 onChange={handleSeek}
