@@ -29,27 +29,37 @@ export function useVideoAnalysis() {
     setState(prev => ({ ...prev, ...updates }))
   }, [])
 
-  // 画像分析
+  // 画像分析（1枚ずつ送信してVercelの4.5MB制限を回避）
   const analyzeImages = useCallback(async (images: UploadedImage[]): Promise<ImageAnalysis[]> => {
-    updateState({ currentStep: '画像を分析中...', progress: 10 })
+    const analyses: ImageAnalysis[] = []
+    const totalImages = images.length
 
-    const formData = new FormData()
-    images.forEach(img => {
-      formData.append('images', img.file)
-    })
+    for (let i = 0; i < totalImages; i++) {
+      const img = images[i]
+      updateState({ 
+        currentStep: `画像を分析中... (${i + 1}/${totalImages})`, 
+        progress: 10 + Math.floor((i / totalImages) * 20) 
+      })
 
-    const response = await fetch('/api/analyze/images', {
-      method: 'POST',
-      body: formData,
-    })
+      const formData = new FormData()
+      formData.append('image', img.file)
+      formData.append('index', String(i))
 
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || 'Failed to analyze images')
+      const response = await fetch('/api/analyze/image', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || `Failed to analyze image ${i + 1}`)
+      }
+
+      const data = await response.json()
+      analyses.push(data.analysis)
     }
 
-    const data = await response.json()
-    return data.analyses
+    return analyses
   }, [updateState])
 
   // 音源分析（クライアントサイドで実行）
