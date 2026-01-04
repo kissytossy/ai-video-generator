@@ -66,36 +66,59 @@ export async function POST(request: NextRequest) {
 
     const imageCount = imageAnalyses.length
     
-    // strongビートの位置を抽出（切り替えポイント候補）
-    const strongBeats = audioAnalysis.beats
-      .filter(b => b.strength === 'strong' && b.time <= duration)
-      .map(b => b.time)
+    // Claude APIで生成されたswitchPointsがあればそれを優先使用
+    const aiSwitchPoints = (audioAnalysis as any).switchPoints as Array<{
+      time: number
+      reason: string
+      intensity: number
+      suggestedTransition: string
+    }> | undefined
+
+    let suggestedSwitchPoints: number[] = [0]
+    let switchPointDetails: Array<{ time: number; transition: string; intensity: number }> = []
+
+    if (aiSwitchPoints && aiSwitchPoints.length >= imageCount - 1) {
+      // Claude APIからのswitchPointsを使用
+      console.log(`Using ${aiSwitchPoints.length} AI-generated switch points`)
+      
+      // 時間順にソートして必要な数だけ取得
+      const sortedPoints = [...aiSwitchPoints].sort((a, b) => a.time - b.time)
+      for (let i = 0; i < imageCount - 1 && i < sortedPoints.length; i++) {
+        suggestedSwitchPoints.push(sortedPoints[i].time)
+        switchPointDetails.push({
+          time: sortedPoints[i].time,
+          transition: sortedPoints[i].suggestedTransition,
+          intensity: sortedPoints[i].intensity,
+        })
+      }
+      suggestedSwitchPoints.push(duration)
+    } else {
+      // フォールバック: strongビートから選択
+      const strongBeats = audioAnalysis.beats
+        .filter(b => b.strength === 'strong' && b.time <= duration)
+        .map(b => b.time)
+      
+      if (strongBeats.length > imageCount) {
+        const step = strongBeats.length / imageCount
+        for (let i = 1; i < imageCount; i++) {
+          const baseIndex = Math.floor(i * step)
+          const offset = (i % 2 === 0) ? -1 : 1
+          const index = Math.max(0, Math.min(strongBeats.length - 1, baseIndex + offset))
+          suggestedSwitchPoints.push(strongBeats[index])
+        }
+      } else {
+        for (let i = 1; i < imageCount; i++) {
+          const ratio = i / imageCount + (i % 2 === 0 ? 0.05 : -0.05)
+          suggestedSwitchPoints.push(duration * ratio)
+        }
+      }
+      suggestedSwitchPoints.push(duration)
+    }
     
     // ハイライト（曲調変化ポイント）を取得
     const highlights = audioAnalysis.highlights
       .filter(h => h.time <= duration)
       .map(h => ({ time: h.time, type: h.type, intensity: h.intensity }))
-    
-    // 切り替えポイント候補をstrongビートから選択
-    const suggestedSwitchPoints = [0]
-    if (strongBeats.length > imageCount) {
-      // strongビートからランダムに選んで不均等にする
-      const step = strongBeats.length / imageCount
-      for (let i = 1; i < imageCount; i++) {
-        // 少しずらして不均等に
-        const baseIndex = Math.floor(i * step)
-        const offset = (i % 2 === 0) ? -1 : 1
-        const index = Math.max(0, Math.min(strongBeats.length - 1, baseIndex + offset))
-        suggestedSwitchPoints.push(strongBeats[index])
-      }
-    } else {
-      // strongビートが少ない場合は不均等に分割
-      for (let i = 1; i < imageCount; i++) {
-        const ratio = i / imageCount + (i % 2 === 0 ? 0.05 : -0.05)
-        suggestedSwitchPoints.push(duration * ratio)
-      }
-    }
-    suggestedSwitchPoints.push(duration)
     
     // Claude APIで編集計画を生成
     const prompt = `
@@ -229,38 +252,53 @@ function generateSimplePlan(
   const imageCount = imageAnalyses.length
   const clips: Clip[] = []
   
-  // strongビートを取得して切り替えポイントを決定
-  const strongBeats = audioAnalysis.beats
-    .filter(b => b.strength === 'strong' && b.time <= duration)
-    .map(b => b.time)
-  
-  // 画像枚数に応じた切り替えポイントを選択
+  // Claude APIで生成されたswitchPointsがあればそれを優先使用
+  const aiSwitchPoints = (audioAnalysis as any).switchPoints as Array<{
+    time: number
+    suggestedTransition: string
+    intensity: number
+  }> | undefined
+
   const switchPoints = [0]
-  if (strongBeats.length >= imageCount) {
-    // strongビートから等間隔で選択
-    const step = Math.floor(strongBeats.length / imageCount)
-    for (let i = 1; i < imageCount; i++) {
-      switchPoints.push(strongBeats[i * step] || (duration * i / imageCount))
+  const transitionMap: Map<number, string> = new Map()
+
+  if (aiSwitchPoints && aiSwitchPoints.length >= imageCount - 1) {
+    // Claude APIからのswitchPointsを使用
+    const sortedPoints = [...aiSwitchPoints].sort((a, b) => a.time - b.time)
+    for (let i = 0; i < imageCount - 1 && i < sortedPoints.length; i++) {
+      switchPoints.push(sortedPoints[i].time)
+      transitionMap.set(i + 1, sortedPoints[i].suggestedTransition)
     }
   } else {
-    // strongビートが少ない場合は時間で分割
-    for (let i = 1; i < imageCount; i++) {
-      switchPoints.push(duration * i / imageCount)
+    // フォールバック: strongビートから選択
+    const strongBeats = audioAnalysis.beats
+      .filter(b => b.strength === 'strong' && b.time <= duration)
+      .map(b => b.time)
+    
+    if (strongBeats.length >= imageCount) {
+      const step = Math.floor(strongBeats.length / imageCount)
+      for (let i = 1; i < imageCount; i++) {
+        switchPoints.push(strongBeats[i * step] || (duration * i / imageCount))
+      }
+    } else {
+      for (let i = 1; i < imageCount; i++) {
+        switchPoints.push(duration * i / imageCount)
+      }
     }
   }
   switchPoints.push(duration)
   
-  const transitions = ['cut', 'cut', 'cut', 'cut']
   const motions = ['zoom-in', 'zoom-out', 'pan-left', 'pan-right']
   
   for (let i = 0; i < imageCount; i++) {
+    const transition = transitionMap.get(i) || 'cut'
     clips.push({
       imageIndex: i,
       startTime: switchPoints[i],
       endTime: switchPoints[i + 1],
       transition: {
-        type: 'cut',
-        duration: 0,
+        type: transition,
+        duration: transition === 'cut' ? 0 : 0.3,
       },
       motion: {
         type: motions[i % motions.length],

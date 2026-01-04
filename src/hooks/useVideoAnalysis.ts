@@ -76,30 +76,71 @@ export function useVideoAnalysis() {
     return analyses.filter((a): a is ImageAnalysis => a !== null)
   }, [updateState])
 
-  // 音源分析（クライアントサイドで実行）
+  // 音源分析（クライアントサイドで基本分析 + Claude APIで詳細分析）
   const analyzeAudioFile = useCallback(async (
     audio: UploadedAudio,
     startTime: number,
-    endTime: number
+    endTime: number,
+    imageCount: number
   ): Promise<AudioAnalysis> => {
-    updateState({ currentStep: '音源を分析中...', progress: 40 })
+    updateState({ currentStep: '音源を分析中...', progress: 35 })
 
     // AudioBufferを取得
     const audioBuffer = await loadAudioBuffer(audio.file)
     
-    // 音響分析を実行
+    // クライアント側で基本的な音響分析を実行
     const analysisResult = await analyzeAudio(audioBuffer, startTime, endTime)
+    const duration = endTime - startTime
 
-    // ジャンルとムードはAPIで推定（オプション）
-    // 今回は簡易的にデフォルト値を使用
+    updateState({ currentStep: '曲調をAI分析中...', progress: 45 })
+
+    // Claude APIで詳細分析
+    const response = await fetch('/api/analyze/audio', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        audioFeatures: {
+          bpm: analysisResult.bpm,
+          energy: analysisResult.energy,
+          waveformData: analysisResult.waveformData,
+          beats: analysisResult.beats,
+          sections: analysisResult.sections,
+          highlights: analysisResult.highlights,
+          duration,
+        },
+        imageCount,
+      }),
+    })
+
+    if (!response.ok) {
+      console.error('Audio AI analysis failed, using basic analysis')
+      // フォールバック
+      return {
+        bpm: analysisResult.bpm,
+        genre: 'pop',
+        mood: analysisResult.energy > 6 ? 'upbeat' : 'calm',
+        energy: analysisResult.energy,
+        beats: analysisResult.beats,
+        sections: analysisResult.sections,
+        highlights: analysisResult.highlights,
+      }
+    }
+
+    const data = await response.json()
+    const enhanced = data.analysis
+
+    // Claude APIの結果をマージ
     const audioAnalysis: AudioAnalysis = {
-      bpm: analysisResult.bpm,
-      genre: 'pop', // TODO: Claude APIで推定
-      mood: analysisResult.energy > 6 ? 'upbeat' : 'calm',
-      energy: analysisResult.energy,
-      beats: analysisResult.beats,
-      sections: analysisResult.sections,
-      highlights: analysisResult.highlights,
+      bpm: enhanced.bpm || analysisResult.bpm,
+      genre: enhanced.genre || 'pop',
+      mood: enhanced.mood || (analysisResult.energy > 6 ? 'upbeat' : 'calm'),
+      energy: enhanced.energy || analysisResult.energy,
+      beats: enhanced.beats || analysisResult.beats,
+      sections: enhanced.sections || analysisResult.sections,
+      highlights: enhanced.rhythmEvents || analysisResult.highlights,
+      // 追加情報
+      switchPoints: enhanced.switchPoints,
+      overallFeel: enhanced.overallFeel,
     }
 
     return audioAnalysis
@@ -150,12 +191,12 @@ export function useVideoAnalysis() {
     })
 
     try {
-      // 1. 画像分析
+      // 1. 画像分析（簡易、高速）
       const imageAnalyses = await analyzeImages(images)
       updateState({ imageAnalyses, progress: 30 })
 
-      // 2. 音源分析
-      const audioAnalysis = await analyzeAudioFile(audio, startTime, endTime)
+      // 2. 音源分析（Claude APIで詳細分析）
+      const audioAnalysis = await analyzeAudioFile(audio, startTime, endTime, images.length)
       updateState({ audioAnalysis, progress: 60 })
 
       // 3. 編集計画生成

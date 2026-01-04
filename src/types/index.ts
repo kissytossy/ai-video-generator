@@ -38,6 +38,16 @@ export interface AudioAnalysis {
   beats: Beat[]
   sections: Section[]
   highlights: Highlight[]
+  // Claude APIからの追加情報
+  switchPoints?: SwitchPoint[]
+  overallFeel?: string
+}
+
+export interface SwitchPoint {
+  time: number
+  reason: string
+  intensity: number
+  suggestedTransition: string
 }
 
 export interface Beat {
