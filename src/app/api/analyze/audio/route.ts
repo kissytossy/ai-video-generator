@@ -21,6 +21,13 @@ interface RhythmEvent {
   description?: string
 }
 
+interface RapidSection {
+  start: number
+  end: number
+  reason: string
+  suggestedInterval: number
+}
+
 interface EnhancedAudioAnalysis {
   genre: string
   mood: string
@@ -34,11 +41,13 @@ interface EnhancedAudioAnalysis {
     description: string
   }>
   rhythmEvents: RhythmEvent[]
+  rapidSections: RapidSection[]
   switchPoints: Array<{
     time: number
     reason: string
     intensity: number
     suggestedTransition: string
+    isRapid?: boolean
   }>
   overallFeel: string
 }
@@ -46,13 +55,35 @@ interface EnhancedAudioAnalysis {
 const AUDIO_ANALYSIS_PROMPT = `あなたは音楽プロデューサー兼動画編集の専門家です。
 音源の特徴量データを分析し、画像を切り替える最適なタイミングを提案してください。
 
-## 重要な指示
+## 最重要：画像切り替えの「密度」を曲調に合わせる
 
-1. **画像切り替えポイント（switchPoints）は必ず指定された枚数分を生成してください**
-2. **リズムの変化を重視**: ドラムフィル、ブレイク、ビルドアップなどの瞬間は最高の切り替えポイント
-3. **サビの入りは印象的に**: サビに入る瞬間（drop）は intensity を高く
-4. **静かな部分では余韻を**: ゆっくりしたフェードやディゾルブを提案
-5. **ビートに合わせる**: 可能な限り強拍（strong beat）に合わせた時間を提案
+**これが最も重要なコンセプトです：**
+- **ビルドアップ・フィルイン区間**（サビ前のドラムフィル、ベースのスラップ、ギターの速弾きなど）
+  → **0.2〜0.5秒刻み**で画像を高速切り替え！複数枚をこの区間に「密集」させる
+- **サビ・クライマックス区間**
+  → **2〜4秒**でじっくり見せる
+- **静かな区間・イントロ・アウトロ**
+  → **3〜5秒**でゆったり
+
+例：19枚の画像、30秒の曲の場合
+- イントロ (0-8秒): 画像1-3を使用（各2-3秒）
+- Aメロ (8-16秒): 画像4-7を使用（各2秒）
+- ビルドアップ (16-18秒): 画像8-13を使用（各0.3秒！）← ここで6枚を2秒に詰め込む
+- サビ (18-28秒): 画像14-17を使用（各2.5秒）
+- アウトロ (28-30秒): 画像18-19を使用（各1秒）
+
+## 切り替えタイミングの決め方
+
+1. **ビルドアップ/フィルイン区間を最優先で特定**
+   - ドラムロール、スネアの連打、ベースラインの上昇
+   - この区間には画像を「密集」配置（0.2-0.5秒間隔）
+   
+2. **残りの画像を他の区間に配分**
+   - サビは印象的な画像を長めに（2-4秒）
+   - 静かな部分はゆったり（3-5秒）
+
+3. **必ず強拍（ビート）に合わせる**
+   - 切り替えタイミングは提供された強拍時刻から選ぶ
 
 必ず以下のJSON形式のみで回答してください：
 
@@ -77,12 +108,21 @@ const AUDIO_ANALYSIS_PROMPT = `あなたは音楽プロデューサー兼動画�
       "description": "例：ドラムフィルでサビに突入"
     }
   ],
+  "rapidSections": [
+    {
+      "start": 開始秒,
+      "end": 終了秒,
+      "reason": "なぜ高速切り替えが効果的か（例：ドラムフィルに合わせて）",
+      "suggestedInterval": 0.3
+    }
+  ],
   "switchPoints": [
     {
       "time": 秒（小数点2桁まで）,
       "reason": "なぜこのタイミングで切り替えるべきか",
-      "intensity": 1-10（切り替えの印象度）,
-      "suggestedTransition": "cut/fade/dissolve/slide-left/slide-right/zoom/wipe"
+      "intensity": 1-10（切り替えの印象度。高速切り替え区間は8-10）,
+      "suggestedTransition": "cut/fade/dissolve/slide-left/slide-right/zoom/wipe",
+      "isRapid": true/false（高速切り替え区間内かどうか）
     }
   ]
 }`
@@ -144,11 +184,30 @@ ${(() => {
   }).join('\n')
 })()}
 
-## 指示
-1. **switchPointsは${imageCount - 1}個生成してください**（最初の画像は0秒から始まるため）
-2. ハイライト（drop, buildup, fillin等）の時刻を優先的にswitchPointsに含めてください
-3. それ以外は強拍に合わせて均等に分散させてください
-4. サビやドロップ直前には「buildup」のrhythmEventを追加し、そこで切り替えると効果的であることを示してください
+## 重要な指示
+
+### 画像配分の考え方
+${imageCount}枚の画像を以下のように配分してください：
+
+1. **ビルドアップ/フィルイン区間を特定**（エネルギーが急上昇する直前、ドラムフィルなど）
+   - この区間には画像を「密集」させる（0.2〜0.5秒間隔）
+   - 例：2秒間のビルドアップに5〜6枚を詰め込む
+
+2. **残りの画像を他区間に配分**
+   - サビ・クライマックス：2〜4秒
+   - 静かな区間：3〜5秒
+
+3. **switchPointsは${imageCount - 1}個生成**
+   - 高速切り替え区間では連続した短い間隔のポイントを生成
+   - isRapid: true を必ず設定
+
+### 具体例（${imageCount}枚、${audioFeatures.duration.toFixed(0)}秒の場合）
+もしビルドアップが15-17秒にあるなら：
+- 0-15秒：6枚を使用（各2-3秒）
+- 15-17秒：6枚を高速切り替え（各0.3秒）← rapidSection
+- 17-${audioFeatures.duration.toFixed(0)}秒：残り${imageCount - 12}枚（各2-3秒）
+
+**rapidSectionsは必ず1つ以上指定してください。**
 `
 
     let enhancedAnalysis: EnhancedAudioAnalysis
