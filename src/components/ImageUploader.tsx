@@ -21,10 +21,20 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import imageCompression from 'browser-image-compression'
 
 interface Props {
   images: UploadedImage[]
   setImages: React.Dispatch<React.SetStateAction<UploadedImage[]>>
+}
+
+// 画像圧縮オプション
+const COMPRESSION_OPTIONS = {
+  maxSizeMB: 0.3,          // 最大0.3MB（300KB）に圧縮
+  maxWidthOrHeight: 1920,  // 最大幅/高さ1920px
+  useWebWorker: true,      // Web Workerで処理（UIブロック防止）
+  fileType: 'image/jpeg' as const,  // JPEG形式に変換
+  initialQuality: 0.8,     // 初期品質80%
 }
 
 // ソート可能な画像アイテムコンポーネント
@@ -134,6 +144,7 @@ function DragOverlayItem({ image }: { image: UploadedImage }) {
 export default function ImageUploader({ images, setImages }: Props) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [isCompressing, setIsCompressing] = useState(false)
   
   const generateId = () => Math.random().toString(36).substring(2, 9)
 
@@ -165,22 +176,55 @@ export default function ImageUploader({ images, setImages }: Props) {
     }
   }
 
+  // 画像を圧縮する関数
+  const compressImage = async (file: File): Promise<File> => {
+    try {
+      // 常に圧縮処理を実行（サイズ・解像度の最適化）
+      const compressed = await imageCompression(file, COMPRESSION_OPTIONS)
+      console.log(`Compressed: ${file.name} ${(file.size / 1024).toFixed(0)}KB → ${(compressed.size / 1024).toFixed(0)}KB`)
+      return compressed
+    } catch (error) {
+      console.error('Image compression failed:', error)
+      return file // 失敗時は元のファイルを返す
+    }
+  }
+
+  // 複数画像を圧縮して追加
+  const processAndAddImages = useCallback(async (files: File[]) => {
+    setIsCompressing(true)
+    
+    try {
+      const processedImages: UploadedImage[] = []
+      
+      for (const file of files) {
+        if (!file.type.startsWith('image/')) continue
+        
+        const compressedFile = await compressImage(file)
+        processedImages.push({
+          id: generateId(),
+          file: compressedFile,
+          preview: URL.createObjectURL(compressedFile),
+          name: file.name,
+        })
+      }
+      
+      setImages(prev => [...prev, ...processedImages])
+    } catch (error) {
+      console.error('Failed to process images:', error)
+    } finally {
+      setIsCompressing(false)
+    }
+  }, [setImages])
+
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files) return
 
-    const newImages: UploadedImage[] = Array.from(files).map(file => ({
-      id: generateId(),
-      file,
-      preview: URL.createObjectURL(file),
-      name: file.name,
-    }))
-
-    setImages(prev => [...prev, ...newImages])
+    processAndAddImages(Array.from(files))
     
     // inputをリセット（同じファイルを再度選択できるように）
     e.target.value = ''
-  }, [setImages])
+  }, [processAndAddImages])
 
   const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -194,15 +238,8 @@ export default function ImageUploader({ images, setImages }: Props) {
       file.type.startsWith('image/')
     )
 
-    const newImages: UploadedImage[] = imageFiles.map(file => ({
-      id: generateId(),
-      file,
-      preview: URL.createObjectURL(file),
-      name: file.name,
-    }))
-
-    setImages(prev => [...prev, ...newImages])
-  }, [setImages])
+    processAndAddImages(imageFiles)
+  }, [processAndAddImages])
 
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -232,8 +269,18 @@ export default function ImageUploader({ images, setImages }: Props) {
     <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold text-gray-900">📷 画像</h3>
-        <span className="text-sm text-gray-500">{images.length}枚</span>
+        <span className="text-sm text-gray-500">
+          {isCompressing ? '圧縮中...' : `${images.length}枚`}
+        </span>
       </div>
+
+      {/* 圧縮中のオーバーレイ */}
+      {isCompressing && (
+        <div className="mb-4 p-3 bg-blue-50 rounded-lg flex items-center gap-2">
+          <div className="animate-spin w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+          <span className="text-sm text-blue-700">画像を最適化しています...</span>
+        </div>
+      )}
 
       {/* ドロップゾーン */}
       <div
@@ -242,7 +289,7 @@ export default function ImageUploader({ images, setImages }: Props) {
         onDragLeave={handleDragLeave}
         className={`drop-zone mb-4 cursor-pointer transition-all ${
           isDragOver ? 'border-primary-500 bg-primary-50 scale-[1.02]' : ''
-        }`}
+        } ${isCompressing ? 'pointer-events-none opacity-50' : ''}`}
       >
         <input
           type="file"
@@ -251,6 +298,7 @@ export default function ImageUploader({ images, setImages }: Props) {
           onChange={handleFileChange}
           className="hidden"
           id="image-upload"
+          disabled={isCompressing}
         />
         <label htmlFor="image-upload" className="cursor-pointer">
           <span className="text-4xl mb-2 block">{isDragOver ? '📥' : '📁'}</span>
@@ -258,7 +306,7 @@ export default function ImageUploader({ images, setImages }: Props) {
             {isDragOver ? 'ここにドロップ！' : 'ドラッグ&ドロップ または クリックで画像を追加'}
           </p>
           <p className="text-sm text-gray-400">
-            JPEG, PNG, WebP対応 / 複数選択可
+            JPEG, PNG, WebP対応 / 複数選択可 / 自動圧縮
           </p>
         </label>
       </div>
