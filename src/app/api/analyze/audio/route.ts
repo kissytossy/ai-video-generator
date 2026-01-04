@@ -4,13 +4,21 @@ import { callClaude } from '@/lib/claude'
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
+interface FrequencyBandEvent {
+  time: number
+  band: 'low' | 'mid' | 'high'
+  type: 'accent' | 'pattern_change' | 'intensity_spike'
+  intensity: number
+}
+
 interface AudioFeatures {
   bpm: number
   energy: number
   waveformData: number[]
   beats: Array<{ time: number; strength: string }>
   sections: Array<{ start: number; end: number; type: string; energy: number }>
-  highlights: Array<{ time: number; type: string; intensity: number }>
+  highlights: Array<{ time: number; type: string; intensity: number; source?: string }>
+  frequencyEvents?: FrequencyBandEvent[]  // 周波数帯域イベント
   duration: number
 }
 
@@ -162,8 +170,22 @@ ${audioFeatures.sections.map(s =>
 
 ## 検出されたハイライト（重要！これらは特に印象的な切り替えポイント候補）
 ${audioFeatures.highlights.map(h => 
-  `- ${h.time.toFixed(2)}秒: ${h.type} (強度: ${h.intensity}/10)`
+  `- ${h.time.toFixed(2)}秒: ${h.type}${h.source ? ` [${h.source}]` : ''} (強度: ${h.intensity}/10)`
 ).join('\n')}
+
+## 周波数帯域で検出された楽器アクセント（最重要！）
+以下は各周波数帯域で検出された突発的なアクセントです。これらは楽器の特徴的なフレーズを示します：
+${(() => {
+  const events = audioFeatures.frequencyEvents || []
+  if (events.length === 0) return '(検出なし)'
+  
+  const bandNames = { low: '低音(ドラム/ベース)', mid: '中音(ギター/ボーカル)', high: '高音(ハイハット/シンバル)' }
+  return events.slice(0, 40).map(e => 
+    `- ${e.time.toFixed(2)}秒: ${bandNames[e.band]} - ${e.type} (強度: ${e.intensity}/10)`
+  ).join('\n') + (events.length > 40 ? `\n... 他${events.length - 40}件` : '')
+})()}
+
+**上記の周波数イベントが集中している区間は、高速切り替えの候補です！**
 
 ## エネルギー分布（曲の流れを把握するため）
 ${(() => {
@@ -192,8 +214,9 @@ ${(() => {
 ### 高速切り替え区間の検出
 以下のいずれかに該当する区間を見つけてrapidSectionsに追加：
 1. ビルドアップ・フィルイン（サビ前のドラム連打など）
-2. **インスト区間で小刻みなビートが入る部分**（ボーカルなしでもOK）
-3. エネルギー7以上で強拍が密集している区間
+2. **周波数イベントが密集している区間**（上記リスト参照）
+3. **インスト区間で小刻みなビートが入る部分**（ボーカルなしでもOK）
+4. エネルギー7以上で強拍が密集している区間
 
 ### 画像配分
 - 高速区間：0.2〜0.5秒間隔で複数枚を密集

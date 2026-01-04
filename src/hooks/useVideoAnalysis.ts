@@ -106,6 +106,7 @@ export function useVideoAnalysis() {
           beats: analysisResult.beats,
           sections: analysisResult.sections,
           highlights: analysisResult.highlights,
+          frequencyEvents: analysisResult.frequencyEvents,  // 周波数帯域イベント追加
           duration,
         },
         imageCount,
