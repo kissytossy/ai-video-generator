@@ -29,21 +29,19 @@ export function useVideoAnalysis() {
     setState(prev => ({ ...prev, ...updates }))
   }, [])
 
-  // 画像分析（1枚ずつ送信してVercelの4.5MB制限を回避）
+  // 画像分析（並列処理で高速化、Vercelの4.5MB制限を回避するため1枚ずつ送信）
   const analyzeImages = useCallback(async (images: UploadedImage[]): Promise<ImageAnalysis[]> => {
-    const analyses: ImageAnalysis[] = []
     const totalImages = images.length
+    const CONCURRENT_LIMIT = 5 // 同時に5枚まで並列処理
+    
+    const analyses: (ImageAnalysis | null)[] = new Array(totalImages).fill(null)
+    let completedCount = 0
 
-    for (let i = 0; i < totalImages; i++) {
-      const img = images[i]
-      updateState({ 
-        currentStep: `画像を分析中... (${i + 1}/${totalImages})`, 
-        progress: 10 + Math.floor((i / totalImages) * 20) 
-      })
-
+    // 1枚の画像を分析する関数
+    const analyzeOne = async (img: UploadedImage, index: number): Promise<void> => {
       const formData = new FormData()
       formData.append('image', img.file)
-      formData.append('index', String(i))
+      formData.append('index', String(index))
 
       const response = await fetch('/api/analyze/image', {
         method: 'POST',
@@ -52,14 +50,30 @@ export function useVideoAnalysis() {
 
       if (!response.ok) {
         const error = await response.json()
-        throw new Error(error.error || `Failed to analyze image ${i + 1}`)
+        throw new Error(error.error || `Failed to analyze image ${index + 1}`)
       }
 
       const data = await response.json()
-      analyses.push(data.analysis)
+      analyses[index] = data.analysis
+      
+      completedCount++
+      updateState({ 
+        currentStep: `画像をAI分析中... (${completedCount}/${totalImages})`, 
+        progress: 10 + Math.floor((completedCount / totalImages) * 20) 
+      })
     }
 
-    return analyses
+    // 並列処理（CONCURRENT_LIMIT枚ずつ）
+    for (let i = 0; i < totalImages; i += CONCURRENT_LIMIT) {
+      const batch = images.slice(i, i + CONCURRENT_LIMIT)
+      const promises = batch.map((img, batchIndex) => 
+        analyzeOne(img, i + batchIndex)
+      )
+      await Promise.all(promises)
+    }
+
+    // nullチェック（全て完了しているはず）
+    return analyses.filter((a): a is ImageAnalysis => a !== null)
   }, [updateState])
 
   // 音源分析（クライアントサイドで実行）
