@@ -162,33 +162,41 @@ ${suggestedSwitchPoints.map((t, i) => i < imageCount ? `画像${i + 1}: ${t.toFi
         
         // クリップ数と画像インデックスを検証・修正
         if (editingPlan.clips && editingPlan.clips.length > 0) {
-          // imageIndexが範囲外の場合は修正
-          editingPlan.clips = editingPlan.clips.map((clip, i) => ({
-            ...clip,
-            imageIndex: Math.min(Math.max(0, clip.imageIndex), imageCount - 1)
-          }))
-          
-          // 時間を正規化（常にduration内に収める）
-          const lastClip = editingPlan.clips[editingPlan.clips.length - 1]
-          const totalTime = lastClip.endTime
-          
-          // 時間をスケーリング
-          if (totalTime > 0 && Math.abs(totalTime - duration) > 0.1) {
-            const scale = duration / totalTime
-            let currentTime = 0
-            editingPlan.clips = editingPlan.clips.map(clip => {
-              const clipDuration = (clip.endTime - clip.startTime) * scale
-              const newClip = {
-                ...clip,
-                startTime: Math.round(currentTime * 100) / 100,
-                endTime: Math.round((currentTime + clipDuration) * 100) / 100
-              }
-              currentTime += clipDuration
-              return newClip
-            })
-            // 最後のクリップのendTimeを正確にdurationに設定
-            editingPlan.clips[editingPlan.clips.length - 1].endTime = duration
+          // クリップ数が画像枚数と一致しない場合はフォールバック
+          if (editingPlan.clips.length !== imageCount) {
+            console.log(`Clip count mismatch: got ${editingPlan.clips.length}, expected ${imageCount}. Using fallback.`)
+            editingPlan = generateSimplePlan(imageAnalyses, audioAnalysis, duration)
+          } else {
+            // imageIndexが範囲外の場合は修正
+            editingPlan.clips = editingPlan.clips.map((clip, i) => ({
+              ...clip,
+              imageIndex: Math.min(Math.max(0, clip.imageIndex), imageCount - 1)
+            }))
+            
+            // 時間を正規化（常にduration内に収める）
+            const lastClip = editingPlan.clips[editingPlan.clips.length - 1]
+            const totalTime = lastClip.endTime
+            
+            // 時間をスケーリング
+            if (totalTime > 0 && Math.abs(totalTime - duration) > 0.1) {
+              const scale = duration / totalTime
+              let currentTime = 0
+              editingPlan.clips = editingPlan.clips.map(clip => {
+                const clipDuration = (clip.endTime - clip.startTime) * scale
+                const newClip = {
+                  ...clip,
+                  startTime: Math.round(currentTime * 100) / 100,
+                  endTime: Math.round((currentTime + clipDuration) * 100) / 100
+                }
+                currentTime += clipDuration
+                return newClip
+              })
+              // 最後のクリップのendTimeを正確にdurationに設定
+              editingPlan.clips[editingPlan.clips.length - 1].endTime = duration
+            }
           }
+        } else {
+          throw new Error('No clips in response')
         }
       } else {
         throw new Error('No JSON found in response')
