@@ -353,6 +353,16 @@ function generateFallbackAnalysis(
     intensity: h.intensity,
   }))
 
+  // ビルドアップ/フィルインをrapidSectionsとして検出
+  const rapidSections: RapidSection[] = features.highlights
+    .filter(h => h.type === 'buildup' || h.type === 'fillin')
+    .map(h => ({
+      start: Math.max(0, h.time - 1),
+      end: h.time + 1,
+      reason: `${h.type}区間`,
+      suggestedInterval: 0.3,
+    }))
+
   return {
     genre: 'pop',
     mood: features.energy > 6 ? 'upbeat' : 'calm',
@@ -364,6 +374,7 @@ function generateFallbackAnalysis(
       description: `${s.type}セクション`,
     })),
     rhythmEvents,
+    rapidSections,
     switchPoints,
   }
 }
