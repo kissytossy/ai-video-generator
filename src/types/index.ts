@@ -64,8 +64,9 @@ export interface Section {
 
 export interface Highlight {
   time: number
-  type: 'drop' | 'climax' | 'breakdown' | 'transition' | 'buildup' | 'fillin'
+  type: 'drop' | 'climax' | 'breakdown' | 'transition' | 'buildup' | 'fillin' | 'drum_accent' | 'bass_accent' | 'high_accent'
   intensity: number
+  source?: 'low' | 'mid' | 'high' | 'all'
 }
 
 // アスペクト比
