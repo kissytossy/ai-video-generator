@@ -310,6 +310,8 @@ export default function Home() {
             <div className="mt-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
               <h4 className="text-xs font-semibold text-gray-700 mb-2">⚠️ ご利用にあたって</h4>
               <ul className="text-xs text-gray-600 space-y-1.5">
+                <li>• PC（Chrome / Edge推奨）でのご利用を推奨します。</li>
+                <li>• スマホでは処理に時間がかかる場合があります。</li>
                 <li>• 音源は著作権に十分ご注意の上、自己責任でご使用ください。著作権侵害に関して当サービスは一切の責任を負いません。</li>
                 <li>• 動画を生成した時点で、上記の免責事項に同意したものとみなします。</li>
               </ul>
