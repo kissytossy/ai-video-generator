@@ -190,10 +190,11 @@ ${suggestedSwitchPoints.map((t, i) => i < imageCount ? `画像${i + 1}: ${t.toFi
             console.log(`Clip count mismatch: got ${editingPlan.clips.length}, expected ${imageCount}. Using fallback.`)
             editingPlan = generateSimplePlan(imageAnalyses, audioAnalysis, duration)
           } else {
-            // imageIndexが範囲外の場合は修正
+            // ★重要: imageIndexはユーザーの並び順を強制（0, 1, 2...の順）
+            // Claude APIの提案は無視し、ユーザーが並べた順番を使う
             editingPlan.clips = editingPlan.clips.map((clip, i) => ({
               ...clip,
-              imageIndex: Math.min(Math.max(0, clip.imageIndex), imageCount - 1)
+              imageIndex: i  // 常に順番通り
             }))
             
             // 時間を正規化（常にduration内に収める）
