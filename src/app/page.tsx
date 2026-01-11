@@ -8,10 +8,12 @@ import AnalysisProgress from '@/components/AnalysisProgress'
 import TimelineView from '@/components/TimelineView'
 import VideoPreview from '@/components/VideoPreview'
 import VideoExporter from '@/components/VideoExporter'
+import ModeSelector, { GenerationMode } from '@/components/ModeSelector'
 import { useVideoAnalysis } from '@/hooks/useVideoAnalysis'
 import { UploadedImage, UploadedAudio, AspectRatio } from '@/types'
 
 export default function Home() {
+  const [mode, setMode] = useState<GenerationMode>('manual')
   const [images, setImages] = useState<UploadedImage[]>([])
   const [audio, setAudio] = useState<UploadedAudio | null>(null)
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9')
@@ -19,6 +21,8 @@ export default function Home() {
   const [endTime, setEndTime] = useState(0)
   const [fps, setFps] = useState(30)
   const [showExporter, setShowExporter] = useState(false)
+  const [isGeneratingMusic, setIsGeneratingMusic] = useState(false)
+  const [musicGenerationStatus, setMusicGenerationStatus] = useState('')
 
   const {
     isAnalyzing,
@@ -29,26 +33,181 @@ export default function Home() {
     editingPlan,
     error,
     runFullAnalysis,
+    runAutoAnalysis,
     reset,
     setEditingPlan,
   } = useVideoAnalysis()
 
-  const canGenerate = images.length >= 2 && audio !== null
+  // 手動モード: 画像+音源が必要
+  // 自動モード: 画像のみでOK
+  const canGenerate = mode === 'manual' 
+    ? images.length >= 2 && audio !== null
+    : images.length >= 2
 
   const handleAnalyze = async () => {
-    if (!canGenerate || !audio) return
+    if (!canGenerate) return
     
     try {
-      await runFullAnalysis(
-        images,
-        audio,
-        startTime,
-        endTime || audio.duration,
-        aspectRatio
-      )
+      if (mode === 'manual' && audio) {
+        // 手動モード: 従来の処理
+        await runFullAnalysis(
+          images,
+          audio,
+          startTime,
+          endTime || audio.duration,
+          aspectRatio
+        )
+      } else if (mode === 'auto') {
+        // AI自動生成モード
+        await handleAutoGeneration()
+      }
     } catch (e) {
       console.error('Analysis failed:', e)
     }
+  }
+
+  // AI自動生成モードの処理
+  const handleAutoGeneration = async () => {
+    setIsGeneratingMusic(true)
+    setMusicGenerationStatus('画像を分析中...')
+
+    try {
+      // 1. 画像をAI分析（最初の数枚を代表として分析）
+      const imagesToAnalyze = images.slice(0, Math.min(5, images.length))
+      const imageAnalysisResults = []
+
+      for (let i = 0; i < imagesToAnalyze.length; i++) {
+        setMusicGenerationStatus(`画像を分析中... (${i + 1}/${imagesToAnalyze.length})`)
+        
+        const formData = new FormData()
+        formData.append('image', imagesToAnalyze[i].file)
+        formData.append('index', String(i))
+        formData.append('useAI', 'true')
+
+        const response = await fetch('/api/analyze/image', {
+          method: 'POST',
+          body: formData,
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          imageAnalysisResults.push(data.analysis)
+        }
+      }
+
+      // 2. 画像分析結果から音楽プロンプトを生成
+      const musicGenres = imageAnalysisResults.map(a => a.musicGenre).filter(Boolean)
+      const musicMoods = imageAnalysisResults.map(a => a.musicMood).filter(Boolean)
+      const musicTempos = imageAnalysisResults.map(a => a.musicTempo).filter(Boolean)
+      const atmospheres = imageAnalysisResults.map(a => a.atmosphere).filter(Boolean)
+
+      // 最も多いジャンル・ムード・テンポを選択
+      const dominantGenre = getMostFrequent(musicGenres) || 'pop'
+      const dominantMood = getMostFrequent(musicMoods) || 'uplifting'
+      const dominantTempo = getMostFrequent(musicTempos) || 'medium'
+
+      // 3. 曲の長さを計算
+      const tempoMultiplier = dominantTempo === 'fast' ? 1.0 : dominantTempo === 'slow' ? 3.0 : 2.0
+      const duration = Math.max(15, Math.min(120, images.length * tempoMultiplier))
+
+      // 4. 音楽プロンプトを作成
+      const prompt = `${dominantMood} ${dominantGenre} music, ${dominantTempo} tempo, ${atmospheres.join(', ')}`
+
+      setMusicGenerationStatus('AIが曲を作成中...')
+
+      // 5. Beatoven.aiで作曲リクエスト
+      const composeResponse = await fetch('/api/compose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt,
+          duration,
+          genre: dominantGenre,
+          mood: dominantMood,
+          tempo: dominantTempo,
+        }),
+      })
+
+      if (!composeResponse.ok) {
+        throw new Error('Failed to start composition')
+      }
+
+      const { taskId } = await composeResponse.json()
+
+      // 6. 作曲完了をポーリング
+      let trackUrl = null
+      for (let i = 0; i < 60; i++) {  // 最大5分待機
+        await new Promise(resolve => setTimeout(resolve, 5000))
+        
+        setMusicGenerationStatus(`AIが曲を作成中... (${i * 5}秒経過)`)
+
+        const statusResponse = await fetch(`/api/compose/status?taskId=${taskId}`)
+        if (statusResponse.ok) {
+          const statusData = await statusResponse.json()
+          
+          if (statusData.status === 'completed' && statusData.trackUrl) {
+            trackUrl = statusData.trackUrl
+            break
+          }
+        }
+      }
+
+      if (!trackUrl) {
+        throw new Error('Music generation timed out')
+      }
+
+      setMusicGenerationStatus('曲をダウンロード中...')
+
+      // 7. 生成された曲をダウンロードしてaudio stateに設定
+      const audioResponse = await fetch(trackUrl)
+      const audioBlob = await audioResponse.blob()
+      const audioFile = new File([audioBlob], 'ai-generated-music.mp3', { type: 'audio/mpeg' })
+
+      // AudioContextで長さを取得
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const arrayBuffer = await audioFile.arrayBuffer()
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+
+      const generatedAudio: UploadedAudio = {
+        id: 'ai-generated',
+        file: audioFile,
+        name: 'AI Generated Music',
+        duration: audioBuffer.duration,
+        preview: URL.createObjectURL(audioBlob),
+      }
+
+      setAudio(generatedAudio)
+      setStartTime(0)
+      setEndTime(audioBuffer.duration)
+
+      setMusicGenerationStatus('動画を分析中...')
+
+      // 8. 通常の分析フローを実行
+      await runFullAnalysis(
+        images,
+        generatedAudio,
+        0,
+        audioBuffer.duration,
+        aspectRatio
+      )
+
+    } catch (error) {
+      console.error('Auto generation failed:', error)
+      setMusicGenerationStatus('エラーが発生しました')
+    } finally {
+      setIsGeneratingMusic(false)
+      setMusicGenerationStatus('')
+    }
+  }
+
+  // 配列から最頻値を取得
+  const getMostFrequent = (arr: string[]): string | null => {
+    if (arr.length === 0) return null
+    const counts: { [key: string]: number } = {}
+    arr.forEach(item => {
+      counts[item] = (counts[item] || 0) + 1
+    })
+    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0]
   }
 
   // AudioUploaderから範囲選択を受け取るためのラッパー
@@ -124,17 +283,62 @@ export default function Home() {
             </div>
           )}
 
-          {/* 音源アップロード */}
-          <AudioUploader 
-            audio={audio} 
-            setAudio={handleAudioChange}
-            onRangeChange={(start, end) => {
-              setStartTime(start)
-              setEndTime(end)
-              reset() // 範囲が変わったら分析結果をリセット
-              setShowExporter(false)
-            }}
-          />
+          {/* モード選択 */}
+          <ModeSelector mode={mode} setMode={(newMode) => {
+            setMode(newMode)
+            reset()
+            setShowExporter(false)
+            if (newMode === 'auto') {
+              setAudio(null)
+            }
+          }} />
+
+          {/* 音源アップロード（手動モードのみ表示） */}
+          {mode === 'manual' && (
+            <AudioUploader 
+              audio={audio} 
+              setAudio={handleAudioChange}
+              onRangeChange={(start, end) => {
+                setStartTime(start)
+                setEndTime(end)
+                reset()
+                setShowExporter(false)
+              }}
+            />
+          )}
+
+          {/* AI生成中の表示 */}
+          {isGeneratingMusic && (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">🎵 AI作曲中</h3>
+              <div className="flex items-center gap-3">
+                <div className="animate-spin w-5 h-5 border-2 border-primary-500 border-t-transparent rounded-full"></div>
+                <span className="text-gray-700">{musicGenerationStatus}</span>
+              </div>
+              <p className="text-sm text-gray-500 mt-3">
+                ※ 作曲には30秒〜2分程度かかります
+              </p>
+            </div>
+          )}
+
+          {/* 自動生成モードで生成された曲の表示 */}
+          {mode === 'auto' && audio && !isGeneratingMusic && (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">🎵 AI生成された曲</h3>
+              <div className="flex items-center gap-3 mb-3">
+                <span className="text-green-500">✓</span>
+                <span className="text-gray-700">{audio.name}</span>
+              </div>
+              <audio 
+                controls 
+                src={audio.preview} 
+                className="w-full"
+              />
+              <p className="text-sm text-gray-500 mt-2">
+                長さ: {Math.floor(audio.duration / 60)}:{String(Math.floor(audio.duration % 60)).padStart(2, '0')}
+              </p>
+            </div>
+          )}
 
           {/* 画像アップロード */}
           <ImageUploader 
@@ -211,16 +415,26 @@ export default function Home() {
                     画像: {images.length}枚（2枚以上必要）
                   </span>
                 </li>
-                <li className="flex items-center gap-2">
-                  {audio ? (
-                    <span className="text-green-500">✓</span>
-                  ) : (
-                    <span className="text-gray-300">○</span>
-                  )}
-                  <span className={audio ? 'text-gray-900' : 'text-gray-500'}>
-                    音源: {audio ? audio.name : '未選択'}
-                  </span>
-                </li>
+                {mode === 'manual' && (
+                  <li className="flex items-center gap-2">
+                    {audio ? (
+                      <span className="text-green-500">✓</span>
+                    ) : (
+                      <span className="text-gray-300">○</span>
+                    )}
+                    <span className={audio ? 'text-gray-900' : 'text-gray-500'}>
+                      音源: {audio ? audio.name : '未選択'}
+                    </span>
+                  </li>
+                )}
+                {mode === 'auto' && (
+                  <li className="flex items-center gap-2">
+                    <span className="text-blue-500">🤖</span>
+                    <span className="text-gray-700">
+                      音源: AIが自動生成
+                    </span>
+                  </li>
+                )}
                 <li className="flex items-center gap-2">
                   {editingPlan ? (
                     <span className="text-green-500">✓</span>
@@ -243,6 +457,7 @@ export default function Home() {
                   <li>🎭 ムード: {audioAnalysis.mood}</li>
                   <li>⚡ エネルギー: {audioAnalysis.energy}/10</li>
                   <li>📸 画像: {imageAnalyses.length}枚分析済み</li>
+                  {mode === 'auto' && <li>🤖 曲: AI自動生成</li>}
                 </ul>
               </div>
             )}
@@ -251,23 +466,23 @@ export default function Home() {
             {!editingPlan ? (
               <button
                 onClick={handleAnalyze}
-                disabled={!canGenerate || isAnalyzing}
+                disabled={!canGenerate || isAnalyzing || isGeneratingMusic}
                 className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 mb-3 ${
-                  canGenerate && !isAnalyzing
+                  canGenerate && !isAnalyzing && !isGeneratingMusic
                     ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg hover:shadow-xl'
                     : 'bg-gray-200 text-gray-500 cursor-not-allowed'
                 }`}
               >
-                {isAnalyzing ? (
+                {isAnalyzing || isGeneratingMusic ? (
                   <span className="flex items-center justify-center gap-2">
                     <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                     </svg>
-                    分析中...
+                    {isGeneratingMusic ? 'AI作曲中...' : '分析中...'}
                   </span>
                 ) : (
-                  '🤖 AIで分析する'
+                  mode === 'auto' ? '🤖 AIで曲を作成 & 分析' : '🤖 AIで分析する'
                 )}
               </button>
             ) : (
@@ -310,8 +525,8 @@ export default function Home() {
             <div className="mt-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
               <h4 className="text-xs font-semibold text-gray-700 mb-2">⚠️ ご利用にあたって</h4>
               <ul className="text-xs text-gray-600 space-y-1.5">
-                <li>• PC（Chrome / Edge推奨）でのご利用を推奨します。</li>
-                <li>• スマホでは処理に時間がかかる場合があります。</li>
+                <li>• <strong>PC専用</strong>（Chrome / Edge推奨）です。</li>
+                <li>• スマホ・タブレットでは動作しません。</li>
                 <li>• 音源は著作権に十分ご注意の上、自己責任でご使用ください。著作権侵害に関して当サービスは一切の責任を負いません。</li>
                 <li>• 動画を生成した時点で、上記の免責事項に同意したものとみなします。</li>
               </ul>
