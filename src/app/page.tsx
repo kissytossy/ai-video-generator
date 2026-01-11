@@ -172,7 +172,7 @@ export default function Home() {
         file: audioFile,
         name: 'AI Generated Music',
         duration: audioBuffer.duration,
-        preview: URL.createObjectURL(audioBlob),
+        url: URL.createObjectURL(audioBlob),
       }
 
       setAudio(generatedAudio)
@@ -330,7 +330,7 @@ export default function Home() {
               </div>
               <audio 
                 controls 
-                src={audio.preview} 
+                src={audio.url} 
                 className="w-full"
               />
               <p className="text-sm text-gray-500 mt-2">
