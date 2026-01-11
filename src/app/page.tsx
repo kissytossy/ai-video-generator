@@ -33,7 +33,6 @@ export default function Home() {
     editingPlan,
     error,
     runFullAnalysis,
-    runAutoAnalysis,
     reset,
     setEditingPlan,
   } = useVideoAnalysis()
