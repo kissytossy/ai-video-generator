@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       )
     }
-
+    
     const body: ComposeRequest = await request.json()
     const { prompt, duration, genre, mood, tempo } = body
 

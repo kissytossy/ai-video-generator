@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+export const dynamic = 'force-dynamic'
+
 const BEATOVEN_API_KEY = process.env.BEATOVEN_API_KEY
 const BEATOVEN_API_BASE_URL = 'https://public-api.beatoven.ai'
 
@@ -13,8 +15,7 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const { searchParams } = new URL(request.url)
-    const taskId = searchParams.get('taskId')
+    const taskId = request.nextUrl.searchParams.get('taskId')
 
     if (!taskId) {
       return NextResponse.json(
