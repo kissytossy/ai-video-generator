@@ -1,12 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 const BEATOVEN_API_KEY = process.env.BEATOVEN_API_KEY
 const BEATOVEN_API_BASE_URL = 'https://public-api.beatoven.ai'
 
-// ステータス確認
-export async function GET(request: NextRequest) {
+interface ComposeRequest {
+  prompt: string
+  duration: number  // 秒
+  genre?: string
+  mood?: string
+  tempo?: 'slow' | 'medium' | 'fast'
+}
+
+// 作曲をリクエスト
+export async function POST(request: NextRequest) {
   try {
     if (!BEATOVEN_API_KEY) {
       return NextResponse.json(
@@ -15,26 +24,37 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const taskId = request.nextUrl.searchParams.get('taskId')
+    const body: ComposeRequest = await request.json()
+    const { prompt, duration, genre, mood, tempo } = body
 
-    if (!taskId) {
+    if (!prompt || !duration) {
       return NextResponse.json(
-        { error: 'taskId is required' },
+        { error: 'prompt and duration are required' },
         { status: 400 }
       )
     }
 
-    // Beatoven.aiにステータス確認
-    const response = await fetch(`${BEATOVEN_API_BASE_URL}/api/v1/tasks/${taskId}`, {
-      method: 'GET',
+    // Beatoven.aiに作曲リクエスト
+    const response = await fetch(`${BEATOVEN_API_BASE_URL}/api/v1/tasks`, {
+      method: 'POST',
       headers: {
         'Authorization': `Bearer ${BEATOVEN_API_KEY}`,
+        'Content-Type': 'application/json',
       },
+      body: JSON.stringify({
+        prompt,
+        duration: Math.ceil(duration),  // 秒（整数）
+        format: 'mp3',
+        // オプション
+        ...(genre && { genre }),
+        ...(mood && { mood }),
+        ...(tempo && { tempo }),
+      }),
     })
 
     if (!response.ok) {
       const errorText = await response.text()
-      console.error('Beatoven status check error:', errorText)
+      console.error('Beatoven API error:', errorText)
       return NextResponse.json(
         { error: `Beatoven API error: ${response.status}` },
         { status: response.status }
@@ -42,26 +62,16 @@ export async function GET(request: NextRequest) {
     }
 
     const data = await response.json()
-    const status = data.status || 'unknown'
-
-    // 完了時は音源URLを返す
-    if (status === 'composed') {
-      const trackUrl = data.meta?.track_url || data.track_url
-      return NextResponse.json({
-        status: 'completed',
-        trackUrl,
-      })
-    }
-
-    // 進行中
+    
     return NextResponse.json({
-      status: status === 'running' ? 'composing' : status,
+      taskId: data.task_id || data.id,
+      status: 'started',
     })
 
   } catch (error) {
-    console.error('Status check error:', error)
+    console.error('Compose error:', error)
     return NextResponse.json(
-      { error: 'Failed to check status' },
+      { error: 'Failed to start composition' },
       { status: 500 }
     )
   }
