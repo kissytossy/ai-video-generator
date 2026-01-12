@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       )
     }
-    
+
     const body: ComposeRequest = await request.json()
     const { prompt, duration, genre, mood, tempo } = body
 
@@ -35,20 +35,18 @@ export async function POST(request: NextRequest) {
     }
 
     // Beatoven.aiに作曲リクエスト
-    const response = await fetch(`${BEATOVEN_API_BASE_URL}/api/v1/tasks`, {
+    const response = await fetch(`${BEATOVEN_API_BASE_URL}/api/v1/tracks/compose`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${BEATOVEN_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        prompt,
-        duration: Math.ceil(duration),  // 秒（整数）
+        prompt: {
+          text: `${prompt}, ${Math.ceil(duration)} seconds`
+        },
         format: 'mp3',
-        // オプション
-        ...(genre && { genre }),
-        ...(mood && { mood }),
-        ...(tempo && { tempo }),
+        looping: false,
       }),
     })
 
