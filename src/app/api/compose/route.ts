@@ -22,6 +22,7 @@ export async function POST(request: NextRequest) {
     console.log('Suno API request:', { prompt: musicPrompt, style })
 
     // sunoapi.org API呼び出し
+    // callBackUrlはダミーでも必須（ポーリングで確認するため実際には使わない）
     const response = await fetch('https://api.sunoapi.org/api/v1/generate', {
       method: 'POST',
       headers: {
@@ -35,6 +36,7 @@ export async function POST(request: NextRequest) {
         prompt: musicPrompt,
         style: style,
         title: 'AI Generated BGM',
+        callBackUrl: 'https://example.com/callback',  // 必須パラメータ（実際には使用しない）
       }),
     })
 
