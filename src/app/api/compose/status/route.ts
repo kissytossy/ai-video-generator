@@ -24,8 +24,8 @@ export async function GET(request: NextRequest) {
 
     console.log('Checking status for taskId:', taskId)
 
-    // sunoapi.orgのステータス確認API
-    const response = await fetch(`https://api.sunoapi.org/api/v1/music/${taskId}`, {
+    // sunoapi.orgのステータス確認API（正しいエンドポイント）
+    const response = await fetch(`https://api.sunoapi.org/api/v1/generate/record-info?taskId=${taskId}`, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${SUNO_API_KEY}`,
@@ -46,46 +46,42 @@ export async function GET(request: NextRequest) {
     console.log('Suno status response:', JSON.stringify(data, null, 2))
 
     // sunoapi.orgのレスポンス形式を処理
-    // 通常、dataにsongs配列が含まれる
+    // 正しいレスポンス形式:
+    // { code: 200, data: { status: "SUCCESS", response: { sunoData: [{ audioUrl: "..." }] } } }
     if (data.code === 200 && data.data) {
-      const songs = data.data
+      const taskData = data.data
       
-      // 配列の場合（2曲生成される）
-      if (Array.isArray(songs) && songs.length > 0) {
-        const firstSong = songs[0]
-        
-        // 完了チェック - audio_urlまたはsong_urlがあれば完了
-        if (firstSong.audio_url || firstSong.song_url || firstSong.stream_url) {
-          const trackUrl = firstSong.audio_url || firstSong.song_url || firstSong.stream_url
-          return NextResponse.json({
-            status: 'completed',
-            trackUrl: trackUrl,
-            title: firstSong.title,
-            duration: firstSong.duration,
-          })
+      // ステータスがSUCCESSなら完了
+      if (taskData.status === 'SUCCESS' && taskData.response?.sunoData) {
+        const songs = taskData.response.sunoData
+        if (Array.isArray(songs) && songs.length > 0) {
+          const firstSong = songs[0]
+          const trackUrl = firstSong.audioUrl || firstSong.audio_url || firstSong.streamAudioUrl
+          
+          if (trackUrl) {
+            return NextResponse.json({
+              status: 'completed',
+              trackUrl: trackUrl,
+              title: firstSong.title,
+              duration: firstSong.duration,
+            })
+          }
         }
-        
-        // まだ処理中
+      }
+      
+      // まだ処理中
+      if (taskData.status === 'PENDING' || taskData.status === 'PROCESSING' || !taskData.status) {
         return NextResponse.json({
           status: 'processing',
-          progress: firstSong.progress || 0,
+          taskStatus: taskData.status || 'unknown',
         })
       }
       
-      // オブジェクトの場合
-      if (data.data.audio_url || data.data.song_url || data.data.stream_url) {
-        const trackUrl = data.data.audio_url || data.data.song_url || data.data.stream_url
+      // エラーの場合
+      if (taskData.status === 'FAILED' || taskData.errorMessage) {
         return NextResponse.json({
-          status: 'completed',
-          trackUrl: trackUrl,
-        })
-      }
-      
-      // ステータスフィールドがある場合
-      if (data.data.status) {
-        return NextResponse.json({
-          status: data.data.status === 'complete' ? 'completed' : 'processing',
-          trackUrl: data.data.audio_url || data.data.song_url || null,
+          status: 'failed',
+          error: taskData.errorMessage || 'Generation failed',
         })
       }
     }
