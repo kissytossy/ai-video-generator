@@ -128,25 +128,36 @@ export default function Home() {
       })
 
       if (!composeResponse.ok) {
-        throw new Error('Failed to start composition')
+        const errorData = await composeResponse.text()
+        console.error('Compose API error:', errorData)
+        throw new Error(`Failed to start composition: ${errorData}`)
       }
 
-      const { taskId } = await composeResponse.json()
+      const composeData = await composeResponse.json()
+      console.log('Compose response:', composeData)
+      const taskId = composeData.taskId
+
+      if (!taskId) {
+        throw new Error('No taskId returned from compose API')
+      }
 
       // 6. 作曲完了をポーリング
       let trackUrl = null
       for (let i = 0; i < 60; i++) {  // 最大5分待機
         await new Promise(resolve => setTimeout(resolve, 5000))
         
-        setMusicGenerationStatus(`AIが曲を作成中... (${i * 5}秒経過)`)
+        setMusicGenerationStatus(`AIが曲を作成中... (${(i + 1) * 5}秒経過)`)
 
         const statusResponse = await fetch(`/api/compose/status?taskId=${taskId}`)
+        const statusData = await statusResponse.json()
+        console.log('Status check:', statusData)
+        
         if (statusResponse.ok) {
-          const statusData = await statusResponse.json()
-          
           if (statusData.status === 'completed' && statusData.trackUrl) {
             trackUrl = statusData.trackUrl
             break
+          } else if (statusData.error) {
+            throw new Error(`Composition failed: ${statusData.error}`)
           }
         }
       }
@@ -192,7 +203,9 @@ export default function Home() {
 
     } catch (error) {
       console.error('Auto generation failed:', error)
-      setMusicGenerationStatus('エラーが発生しました')
+      setMusicGenerationStatus(`エラー: ${error instanceof Error ? error.message : '不明なエラー'}`)
+      // エラーメッセージを3秒間表示
+      await new Promise(resolve => setTimeout(resolve, 3000))
     } finally {
       setIsGeneratingMusic(false)
       setMusicGenerationStatus('')
