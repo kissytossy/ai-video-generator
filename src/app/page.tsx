@@ -141,29 +141,48 @@ export default function Home() {
         throw new Error('No taskId returned from compose API')
       }
 
-      // 6. 作曲完了をポーリング
+      // 6. 作曲完了をポーリング（最大10分待機）
       let trackUrl = null
-      for (let i = 0; i < 60; i++) {  // 最大5分待機
+      const maxAttempts = 120  // 120回 × 5秒 = 10分
+      
+      for (let i = 0; i < maxAttempts; i++) {
         await new Promise(resolve => setTimeout(resolve, 5000))
         
-        setMusicGenerationStatus(`AIが曲を作成中... (${(i + 1) * 5}秒経過)`)
-
-        const statusResponse = await fetch(`/api/compose/status?taskId=${taskId}`)
-        const statusData = await statusResponse.json()
-        console.log('Status check:', statusData)
+        const elapsed = (i + 1) * 5
+        const minutes = Math.floor(elapsed / 60)
+        const seconds = elapsed % 60
+        const timeStr = minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`
         
-        if (statusResponse.ok) {
-          if (statusData.status === 'completed' && statusData.trackUrl) {
-            trackUrl = statusData.trackUrl
-            break
-          } else if (statusData.error) {
-            throw new Error(`Composition failed: ${statusData.error}`)
+        setMusicGenerationStatus(`AIが曲を作成中... (${timeStr}経過)`)
+
+        try {
+          const statusResponse = await fetch(`/api/compose/status?taskId=${taskId}`)
+          const statusData = await statusResponse.json()
+          console.log('Status check:', statusData)
+          
+          if (statusResponse.ok) {
+            // ステータスに応じた表示
+            if (statusData.status === 'composing') {
+              setMusicGenerationStatus(`AIが曲を作成中... キューで待機中 (${timeStr}経過)`)
+            } else if (statusData.status === 'running') {
+              setMusicGenerationStatus(`AIが曲を作成中... 生成中 (${timeStr}経過)`)
+            } else if (statusData.status === 'completed' && statusData.trackUrl) {
+              trackUrl = statusData.trackUrl
+              break
+            } else if (statusData.error) {
+              throw new Error(`Composition failed: ${statusData.error}`)
+            }
+          } else {
+            console.warn('Status check failed:', statusData)
           }
+        } catch (statusError) {
+          console.warn('Status check error, retrying...', statusError)
+          // エラーでも継続してリトライ
         }
       }
 
       if (!trackUrl) {
-        throw new Error('Music generation timed out')
+        throw new Error('Music generation timed out (10分経過). Please try again.')
       }
 
       setMusicGenerationStatus('曲をダウンロード中...')
