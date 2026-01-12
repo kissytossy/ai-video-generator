@@ -1,75 +1,72 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
 
-const BEATOVEN_API_KEY = process.env.BEATOVEN_API_KEY
-const BEATOVEN_API_BASE_URL = 'https://public-api.beatoven.ai'
+const SUNO_API_KEY = process.env.SUNO_API_KEY
 
-interface ComposeRequest {
-  prompt: string
-  duration: number  // 秒
-  genre?: string
-  mood?: string
-  tempo?: 'slow' | 'medium' | 'fast'
-}
-
-// 作曲をリクエスト
 export async function POST(request: NextRequest) {
+  if (!SUNO_API_KEY) {
+    return NextResponse.json(
+      { error: 'SUNO_API_KEY not configured' },
+      { status: 500 }
+    )
+  }
+
   try {
-    if (!BEATOVEN_API_KEY) {
-      return NextResponse.json(
-        { error: 'Beatoven API key not configured' },
-        { status: 500 }
-      )
-    }
+    const { prompt, duration, genre, mood, tempo } = await request.json()
 
-    const body: ComposeRequest = await request.json()
-    const { prompt, duration, genre, mood, tempo } = body
+    // sunoapi.org用のプロンプトを作成
+    const musicPrompt = `${mood} ${genre} music, ${tempo} tempo, instrumental background music`
+    const style = `${genre}, ${mood}, ${tempo}`
 
-    if (!prompt || !duration) {
-      return NextResponse.json(
-        { error: 'prompt and duration are required' },
-        { status: 400 }
-      )
-    }
+    console.log('Suno API request:', { prompt: musicPrompt, style })
 
-    // Beatoven.aiに作曲リクエスト
-    const response = await fetch(`${BEATOVEN_API_BASE_URL}/api/v1/tracks/compose`, {
+    // sunoapi.org API呼び出し
+    const response = await fetch('https://api.sunoapi.org/api/v1/generate', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${BEATOVEN_API_KEY}`,
+        'Authorization': `Bearer ${SUNO_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        prompt: {
-          text: `${prompt}, ${Math.ceil(duration)} seconds`
-        },
-        format: 'mp3',
-        looping: false,
+        customMode: true,
+        instrumental: true,  // BGM用にインストゥルメンタルを指定
+        model: 'V4_5ALL',    // 最新モデル
+        prompt: musicPrompt,
+        style: style,
+        title: 'AI Generated BGM',
       }),
     })
 
     if (!response.ok) {
       const errorText = await response.text()
-      console.error('Beatoven API error:', errorText)
+      console.error('Suno API error:', errorText)
       return NextResponse.json(
-        { error: `Beatoven API error: ${response.status}` },
+        { error: `Suno API error: ${errorText}` },
         { status: response.status }
       )
     }
 
     const data = await response.json()
-    
-    return NextResponse.json({
-      taskId: data.task_id || data.id,
-      status: 'started',
-    })
+    console.log('Suno API response:', data)
+
+    // sunoapi.orgはtaskIdを返す
+    if (data.code === 200 && data.data?.taskId) {
+      return NextResponse.json({
+        taskId: data.data.taskId,
+        status: 'started',
+      })
+    }
+
+    return NextResponse.json(
+      { error: 'Unexpected response from Suno API', data },
+      { status: 500 }
+    )
 
   } catch (error) {
     console.error('Compose error:', error)
     return NextResponse.json(
-      { error: 'Failed to start composition' },
+      { error: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     )
   }
