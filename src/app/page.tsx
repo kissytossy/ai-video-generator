@@ -23,6 +23,7 @@ export default function Home() {
   const [showExporter, setShowExporter] = useState(false)
   const [isGeneratingMusic, setIsGeneratingMusic] = useState(false)
   const [musicGenerationStatus, setMusicGenerationStatus] = useState('')
+  const [withLyrics, setWithLyrics] = useState(false)
 
   const {
     isAnalyzing,
@@ -61,6 +62,23 @@ export default function Home() {
     }
   }
 
+  // 躍動感スコアから表示時間を計算
+  // 躍動感高い（dynamism >= 7）→ 0.3秒〜3秒
+  // ゆったり系（dynamism < 7）→ 0.3秒〜5秒
+  const calculateDisplayDuration = (dynamism: number): { min: number; max: number; base: number } => {
+    if (dynamism >= 7) {
+      // 躍動感が高い場合: 0.3秒〜3秒
+      // dynamism 7 → 約1.5秒, dynamism 10 → 約0.5秒
+      const base = 3.0 - ((dynamism - 7) / 3) * 2.5
+      return { min: 0.3, max: 3.0, base: Math.max(0.3, Math.min(3.0, base)) }
+    } else {
+      // ゆったり系: 0.3秒〜5秒
+      // dynamism 1 → 約4秒, dynamism 6 → 約1.5秒
+      const base = 5.0 - ((dynamism - 1) / 5) * 3.5
+      return { min: 0.3, max: 5.0, base: Math.max(0.3, Math.min(5.0, base)) }
+    }
+  }
+
   const handleAutoGeneration = async () => {
     setIsGeneratingMusic(true)
     setMusicGenerationStatus('画像を分析中...')
@@ -92,13 +110,23 @@ export default function Home() {
       const musicMoods = imageAnalysisResults.map(a => a.musicMood).filter(Boolean)
       const musicTempos = imageAnalysisResults.map(a => a.musicTempo).filter(Boolean)
       const atmospheres = imageAnalysisResults.map(a => a.atmosphere).filter(Boolean)
+      const dynamismScores = imageAnalysisResults.map(a => a.dynamism || 5).filter(Boolean)
 
       const dominantGenre = getMostFrequent(musicGenres) || 'pop'
       const dominantMood = getMostFrequent(musicMoods) || 'uplifting'
       const dominantTempo = getMostFrequent(musicTempos) || 'medium'
+      
+      // 平均躍動感スコアを計算
+      const avgDynamism = dynamismScores.length > 0 
+        ? dynamismScores.reduce((a, b) => a + b, 0) / dynamismScores.length 
+        : 5
 
-      const tempoMultiplier = dominantTempo === 'fast' ? 1.0 : dominantTempo === 'slow' ? 3.0 : 2.0
-      const duration = Math.max(15, Math.min(120, images.length * tempoMultiplier))
+      // 躍動感に基づいて表示時間を計算
+      const durationInfo = calculateDisplayDuration(avgDynamism)
+      console.log('Dynamism analysis:', { avgDynamism, durationInfo })
+
+      // 曲の長さを計算（画像数 × 基本表示時間）
+      const duration = Math.max(15, Math.min(120, images.length * durationInfo.base))
 
       const prompt = `${dominantMood} ${dominantGenre} music, ${dominantTempo} tempo, ${atmospheres.join(', ')}`
 
@@ -113,6 +141,7 @@ export default function Home() {
           genre: dominantGenre,
           mood: dominantMood,
           tempo: dominantTempo,
+          withLyrics,  // 歌詞オプションを追加
         }),
       })
 
@@ -178,7 +207,7 @@ export default function Home() {
       const generatedAudio: UploadedAudio = {
         id: 'ai-generated',
         file: audioFile,
-        name: 'AI Generated Music',
+        name: withLyrics ? 'AI Generated Music (Vocal)' : 'AI Generated Music (Instrumental)',
         duration: audioBuffer.duration,
         url: URL.createObjectURL(audioBlob),
       }
@@ -265,14 +294,19 @@ export default function Home() {
               </div>
             )}
 
-            <ModeSelector mode={mode} setMode={(newMode) => {
-              setMode(newMode)
-              reset()
-              setShowExporter(false)
-              if (newMode === 'auto') {
-                setAudio(null)
-              }
-            }} />
+            <ModeSelector 
+              mode={mode} 
+              setMode={(newMode) => {
+                setMode(newMode)
+                reset()
+                setShowExporter(false)
+                if (newMode === 'auto') {
+                  setAudio(null)
+                }
+              }}
+              withLyrics={withLyrics}
+              setWithLyrics={setWithLyrics}
+            />
 
             {mode === 'manual' && (
               <AudioUploader 
@@ -390,7 +424,7 @@ export default function Home() {
                   <li className="flex items-center gap-2">
                     <span className="text-blue-500">🤖</span>
                     <span className="text-gray-700">
-                      音源: AIが自動生成
+                      音源: AIが自動生成 {withLyrics ? '(ボーカル)' : '(インスト)'}
                     </span>
                   </li>
                 )}

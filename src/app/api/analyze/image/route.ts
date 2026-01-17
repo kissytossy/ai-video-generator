@@ -19,6 +19,8 @@ interface ImageAnalysisResult {
   musicGenre?: string
   musicMood?: string
   musicTempo?: 'slow' | 'medium' | 'fast'
+  // 躍動感スコア（1-10）- 表示時間の計算に使用
+  dynamism?: number
 }
 
 // Claude Vision APIで画像を分析
@@ -65,7 +67,8 @@ async function analyzeImageWithClaude(imageBase64: string, mimeType: string): Pr
   "atmosphere": "画像全体の雰囲気を一言で",
   "musicGenre": "この画像に合う音楽ジャンル（pop/rock/electronic/ambient/cinematic/jazz/classical）",
   "musicMood": "この画像に合う音楽のムード（uplifting/melancholic/energetic/calm/dramatic/romantic/mysterious）",
-  "musicTempo": "slow/medium/fast"
+  "musicTempo": "slow/medium/fast",
+  "dynamism": 1-10の数値（躍動感・スピード感の強さ。スポーツ、ダンス、爆発、走る動物などは8-10。静物、風景、ポートレートなどは1-4。中程度のアクションは5-7）
 }
 
 JSONのみを回答してください。`,
@@ -115,6 +118,7 @@ function analyzeImageSimple(index: number): ImageAnalysisResult {
     musicGenre: 'pop',
     musicMood: 'uplifting',
     musicTempo: 'medium',
+    dynamism: 5,  // デフォルトは中程度
   }
 }
 

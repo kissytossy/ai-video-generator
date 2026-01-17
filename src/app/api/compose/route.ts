@@ -13,13 +13,15 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { prompt, duration, genre, mood, tempo } = await request.json()
+    const { prompt, duration, genre, mood, tempo, withLyrics } = await request.json()
 
     // sunoapi.org用のプロンプトを作成
-    const musicPrompt = `${mood} ${genre} music, ${tempo} tempo, instrumental background music`
+    const musicPrompt = withLyrics
+      ? `${mood} ${genre} music, ${tempo} tempo, catchy vocals, background music`
+      : `${mood} ${genre} music, ${tempo} tempo, instrumental background music`
     const style = `${genre}, ${mood}, ${tempo}`
 
-    console.log('Suno API request:', { prompt: musicPrompt, style })
+    console.log('Suno API request:', { prompt: musicPrompt, style, withLyrics })
 
     // sunoapi.org API呼び出し
     // callBackUrlはダミーでも必須（ポーリングで確認するため実際には使わない）
@@ -31,11 +33,11 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({
         customMode: true,
-        instrumental: true,  // BGM用にインストゥルメンタルを指定
+        instrumental: !withLyrics,  // 歌詞なし = インストゥルメンタル
         model: 'V4_5ALL',    // 最新モデル
         prompt: musicPrompt,
         style: style,
-        title: 'AI Generated BGM',
+        title: withLyrics ? 'AI Generated Song' : 'AI Generated BGM',
         callBackUrl: 'https://example.com/callback',  // 必須パラメータ（実際には使用しない）
       }),
     })
