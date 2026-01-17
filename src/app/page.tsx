@@ -125,8 +125,9 @@ export default function Home() {
       const durationInfo = calculateDisplayDuration(avgDynamism)
       console.log('Dynamism analysis:', { avgDynamism, durationInfo })
 
-      // 曲の長さを計算（画像数 × 基本表示時間）
-      const duration = Math.max(15, Math.min(120, images.length * durationInfo.base))
+      // 曲の長さを計算（画像枚数 × 躍動感に基づく基本表示時間）
+      // 最低15秒は確保
+      const duration = Math.max(15, images.length * durationInfo.base)
 
       const prompt = `${dominantMood} ${dominantGenre} music, ${dominantTempo} tempo, ${atmospheres.join(', ')}`
 

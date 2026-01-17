@@ -15,16 +15,19 @@ export async function POST(request: NextRequest) {
   try {
     const { prompt, duration, genre, mood, tempo, withLyrics } = await request.json()
 
-    // sunoapi.org用のプロンプトを作成
+    // 曲の長さを秒数で指定（動的に計算された値を使用、最低15秒）
+    const targetDuration = Math.max(15, duration || 60)
+    
+    // sunoapi.org用のプロンプトを作成（曲の長さを含める）
+    const durationText = `approximately ${targetDuration} seconds long`
     const musicPrompt = withLyrics
-      ? `${mood} ${genre} music, ${tempo} tempo, catchy vocals, background music`
-      : `${mood} ${genre} music, ${tempo} tempo, instrumental background music`
+      ? `${mood} ${genre} music, ${tempo} tempo, catchy vocals, ${durationText}`
+      : `${mood} ${genre} music, ${tempo} tempo, instrumental background music, ${durationText}`
     const style = `${genre}, ${mood}, ${tempo}`
 
-    console.log('Suno API request:', { prompt: musicPrompt, style, withLyrics })
+    console.log('Suno API request:', { prompt: musicPrompt, style, withLyrics, targetDuration })
 
     // sunoapi.org API呼び出し
-    // callBackUrlはダミーでも必須（ポーリングで確認するため実際には使わない）
     const response = await fetch('https://api.sunoapi.org/api/v1/generate', {
       method: 'POST',
       headers: {
@@ -33,12 +36,12 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({
         customMode: true,
-        instrumental: !withLyrics,  // 歌詞なし = インストゥルメンタル
-        model: 'V4_5ALL',    // 最新モデル
+        instrumental: !withLyrics,
+        model: 'V4_5ALL',
         prompt: musicPrompt,
         style: style,
         title: withLyrics ? 'AI Generated Song' : 'AI Generated BGM',
-        callBackUrl: 'https://example.com/callback',  // 必須パラメータ（実際には使用しない）
+        callBackUrl: 'https://example.com/callback',
       }),
     })
 
@@ -54,7 +57,6 @@ export async function POST(request: NextRequest) {
     const data = await response.json()
     console.log('Suno API response:', data)
 
-    // sunoapi.orgはtaskIdを返す
     if (data.code === 200 && data.data?.taskId) {
       return NextResponse.json({
         taskId: data.data.taskId,
