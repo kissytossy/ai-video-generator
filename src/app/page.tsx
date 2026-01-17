@@ -425,7 +425,7 @@ export default function Home() {
                       : 'bg-gradient-to-r from-primary-600 to-primary-700 text-white hover:from-primary-700 hover:to-primary-800 shadow-lg hover:shadow-xl'
                   }`}
                 >
-                  {showExporter ? '👇 下にスクロールして動画を生成' : '📥 動画をダウンロード'}
+                  🎬 分析を開始
                 </button>
               )}
 
