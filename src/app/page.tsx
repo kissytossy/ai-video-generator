@@ -320,7 +320,7 @@ export default function Home() {
 
             <ImageUploader images={images} setImages={setImages} />
 
-            <AspectRatioSelector aspectRatio={aspectRatio} setAspectRatio={setAspectRatio} />
+            <AspectRatioSelector selected={aspectRatio} onChange={setAspectRatio} />
 
             {isAnalyzing && (
               <AnalysisProgress 
