@@ -246,7 +246,7 @@ export default function Home() {
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary-500 to-primary-600"></div>
                 <h2 className="text-2xl font-bold text-gray-900 mb-4">📸 プレビュー</h2>
                 <div className="border-2 border-dashed border-gray-300 rounded-xl overflow-hidden bg-gray-50">
-                  {editingPlan && audioAnalysis ? (
+                  {editingPlan && audio ? (
                     <VideoPreview
                       images={images}
                       editingPlan={editingPlan}
@@ -323,9 +323,11 @@ export default function Home() {
             <AspectRatioSelector selected={aspectRatio} onChange={setAspectRatio} />
 
             {isAnalyzing && (
-              <AnalysisProgress 
+              <AnalysisProgress
+                isAnalyzing={isAnalyzing}
                 progress={progress}
                 currentStep={currentStep}
+                error={error}
               />
             )}
 
