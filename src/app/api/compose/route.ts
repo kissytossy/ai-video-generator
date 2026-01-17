@@ -41,6 +41,7 @@ export async function POST(request: NextRequest) {
         prompt: musicPrompt,
         style: style,
         title: withLyrics ? 'AI Generated Song' : 'AI Generated BGM',
+        duration: targetDuration,  // 曲の長さを秒数で指定
         callBackUrl: 'https://example.com/callback',
       }),
     })
