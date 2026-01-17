@@ -411,7 +411,7 @@ export default function Home() {
                   onClick={() => setShowExporter(true)}
                   className="w-full py-3 px-4 rounded-lg font-medium transition-all bg-gradient-to-r from-primary-600 to-primary-700 text-white hover:from-primary-700 hover:to-primary-800 shadow-lg hover:shadow-xl mb-2"
                 >
-                  ✨ 動画を生成する
+                  📥 動画をダウンロード
                 </button>
               )}
 
@@ -425,7 +425,7 @@ export default function Home() {
                       : 'bg-gradient-to-r from-primary-600 to-primary-700 text-white hover:from-primary-700 hover:to-primary-800 shadow-lg hover:shadow-xl'
                   }`}
                 >
-                  {showExporter ? '👇 下にスクロールして動画を生成' : '✨ 動画を生成する'}
+                  {showExporter ? '👇 下にスクロールして動画を生成' : '📥 動画をダウンロード'}
                 </button>
               )}
 
