@@ -253,7 +253,6 @@ export default function Home() {
                       audio={audio!}
                       startTime={startTime}
                       endTime={endTime || audio!.duration}
-                      fps={fps}
                       aspectRatio={aspectRatio}
                     />
                   ) : (
