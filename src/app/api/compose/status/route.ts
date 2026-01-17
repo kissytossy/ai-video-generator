@@ -14,6 +14,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const taskId = request.nextUrl.searchParams.get('taskId')
+    const retry = request.nextUrl.searchParams.get('retry') || '0'
 
     if (!taskId) {
       return NextResponse.json(
@@ -22,16 +23,25 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    console.log('Checking status for taskId:', taskId)
+    console.log(`Checking status for taskId: ${taskId} (retry: ${retry})`)
 
-    // sunoapi.orgのステータス確認API（正しいエンドポイント）
-    const response = await fetch(`https://api.sunoapi.org/api/v1/generate/record-info?taskId=${taskId}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${SUNO_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-    })
+    // キャッシュ対策を強化
+    const timestamp = Date.now()
+    const randomParam = Math.random().toString(36).substring(7)
+    
+    const response = await fetch(
+      `https://api.sunoapi.org/api/v1/generate/record-info?taskId=${taskId}&_t=${timestamp}&_r=${randomParam}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${SUNO_API_KEY}`,
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        },
+      }
+    )
 
     if (!response.ok) {
       const errorText = await response.text()
@@ -45,9 +55,6 @@ export async function GET(request: NextRequest) {
     const data = await response.json()
     console.log('Suno status response:', JSON.stringify(data, null, 2))
 
-    // sunoapi.orgのレスポンス形式を処理
-    // 正しいレスポンス形式:
-    // { code: 200, data: { status: "SUCCESS", response: { sunoData: [{ audioUrl: "..." }] } } }
     if (data.code === 200 && data.data) {
       const taskData = data.data
       
@@ -56,9 +63,10 @@ export async function GET(request: NextRequest) {
         const songs = taskData.response.sunoData
         if (Array.isArray(songs) && songs.length > 0) {
           const firstSong = songs[0]
-          const trackUrl = firstSong.audioUrl || firstSong.audio_url || firstSong.streamAudioUrl
+          const trackUrl = firstSong.audioUrl || firstSong.audio_url || firstSong.streamAudioUrl || firstSong.sourceAudioUrl
           
           if (trackUrl) {
+            console.log('✅ Music generation completed! URL:', trackUrl)
             return NextResponse.json({
               status: 'completed',
               trackUrl: trackUrl,
@@ -69,12 +77,24 @@ export async function GET(request: NextRequest) {
         }
       }
       
-      // まだ処理中（TEXT_SUCCESS、FIRST_SUCCESSも処理中として扱う）
+      // まだ処理中
       if (taskData.status === 'PENDING' || 
           taskData.status === 'TEXT_SUCCESS' || 
           taskData.status === 'FIRST_SUCCESS' || 
           taskData.status === 'PROCESSING' || 
           !taskData.status) {
+        
+        // 10回以上PENDINGが続いたら、一度SUCCESSを再確認
+        const retryCount = parseInt(retry)
+        if (retryCount >= 10 && taskData.status === 'PENDING') {
+          console.log('⚠️ PENDING続行中、強制再確認フラグ')
+          return NextResponse.json({
+            status: 'processing',
+            taskStatus: taskData.status || 'unknown',
+            forceRecheck: true,
+          })
+        }
+        
         return NextResponse.json({
           status: 'processing',
           taskStatus: taskData.status || 'unknown',
