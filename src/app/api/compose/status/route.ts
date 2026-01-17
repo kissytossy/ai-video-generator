@@ -69,8 +69,12 @@ export async function GET(request: NextRequest) {
         }
       }
       
-      // まだ処理中
-      if (taskData.status === 'PENDING' || taskData.status === 'PROCESSING' || !taskData.status) {
+      // まだ処理中（TEXT_SUCCESS、FIRST_SUCCESSも処理中として扱う）
+      if (taskData.status === 'PENDING' || 
+          taskData.status === 'TEXT_SUCCESS' || 
+          taskData.status === 'FIRST_SUCCESS' || 
+          taskData.status === 'PROCESSING' || 
+          !taskData.status) {
         return NextResponse.json({
           status: 'processing',
           taskStatus: taskData.status || 'unknown',
@@ -78,10 +82,14 @@ export async function GET(request: NextRequest) {
       }
       
       // エラーの場合
-      if (taskData.status === 'FAILED' || taskData.errorMessage) {
+      if (taskData.status === 'CREATE_TASK_FAILED' || 
+          taskData.status === 'GENERATE_AUDIO_FAILED' ||
+          taskData.status === 'CALLBACK_EXCEPTION' ||
+          taskData.status === 'SENSITIVE_WORD_ERROR' ||
+          taskData.errorMessage) {
         return NextResponse.json({
           status: 'failed',
-          error: taskData.errorMessage || 'Generation failed',
+          error: taskData.errorMessage || taskData.status || 'Generation failed',
         })
       }
     }
