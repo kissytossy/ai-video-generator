@@ -250,8 +250,9 @@ export default function Home() {
                     <VideoPreview
                       images={images}
                       editingPlan={editingPlan}
-                      audioAnalysis={audioAnalysis}
                       audio={audio!}
+                      startTime={startTime}
+                      endTime={endTime || audio!.duration}
                       fps={fps}
                       aspectRatio={aspectRatio}
                     />
