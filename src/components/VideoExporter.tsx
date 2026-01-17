@@ -45,10 +45,28 @@ export default function VideoExporter({
       await generator.load((msg) => setStatusMessage(msg))
       setIsLoading(false)
 
+      // 音声ファイルを取得（Blob URLから再取得してFileオブジェクトを作成）
+      // これにより、AI生成された音楽でも確実にアクセス可能になる
+      setStatusMessage('音声ファイルを準備中...')
+      let audioFile: File
+      try {
+        // まず直接audio.fileを使用してみる
+        await audio.file.arrayBuffer()
+        audioFile = audio.file
+      } catch {
+        // 失敗した場合はURLから再取得
+        console.log('Re-fetching audio from URL...')
+        const audioResponse = await fetch(audio.url)
+        const audioBlob = await audioResponse.blob()
+        audioFile = new File([audioBlob], audio.name || 'audio.mp3', { 
+          type: audioBlob.type || 'audio/mpeg' 
+        })
+      }
+
       // 動画を生成
       const videoBlob = await generator.generateVideo(
         images,
-        audio.file,
+        audioFile,
         editingPlan,
         aspectRatio,
         startTime,
@@ -85,7 +103,7 @@ export default function VideoExporter({
   }, [downloadUrl])
 
   const duration = endTime - startTime
-  const estimatedTime = Math.ceil((duration * fps) / 10) // 大まかな見積もり
+  const estimatedTime = Math.ceil((duration * fps) / 10)
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
