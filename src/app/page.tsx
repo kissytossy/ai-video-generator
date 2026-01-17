@@ -107,6 +107,7 @@ export default function Home() {
       setMusicGenerationStatus('AI縺梧峇繧剃ｽ懈・荳ｭ...')
 
       // 5. sunoapi.orgで音楽生成リクエスト
+      const composeResponse = await fetch('/api/compose', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
