@@ -341,20 +341,21 @@ export default function Home() {
             {editingPlan && !showExporter && (
               <TimelineView
                 editingPlan={editingPlan}
-                audioAnalysis={audioAnalysis}
                 images={images}
-                onUpdate={setEditingPlan}
+                duration={endTime - startTime}
+                onEditingPlanChange={setEditingPlan}
               />
             )}
 
-            {showExporter && editingPlan && audioAnalysis && audio && (
+            {showExporter && editingPlan && audio && (
               <VideoExporter
                 images={images}
-                editingPlan={editingPlan}
-                audioAnalysis={audioAnalysis}
                 audio={audio}
-                fps={fps}
+                editingPlan={editingPlan}
                 aspectRatio={aspectRatio}
+                startTime={startTime}
+                endTime={endTime}
+                fps={fps}
               />
             )}
           </div>
