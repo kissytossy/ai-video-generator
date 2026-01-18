@@ -156,7 +156,7 @@ function getClimaxPoints(audioAnalysis: AudioAnalysis, duration: number): number
     }
   }
   
-  return [...new Set(climaxPoints)].sort((a, b) => a - b)
+  return Array.from(new Set(climaxPoints)).sort((a, b) => a - b)
 }
 
 // 曲のムードに応じたトランジションを選択
