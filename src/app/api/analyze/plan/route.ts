@@ -12,7 +12,6 @@ interface ImageAnalysis {
   suggestedDuration: string
   motionSuggestion: string
   tags: string[]
-  // dynamism関連
   dynamism?: number
   facialExpression?: string
   emotionalImpact?: string
@@ -57,116 +56,68 @@ interface EditingPlan {
 }
 
 // 躍動感スコアから表示時間の範囲を計算
-function getDurationRange(dynamism: number): { min: number; max: number } {
+function getDurationRange(dynamism: number): { min: number; max: number; ideal: number } {
   if (dynamism >= 7) {
-    // アップテンポ: 0.3秒〜3秒
-    return { min: 0.3, max: 3.0 }
+    // アップテンポ: 0.8秒〜3秒
+    const ideal = 2.5 - ((dynamism - 7) / 3) * 1.5  // 7→2秒, 10→1秒
+    return { min: 0.8, max: 3.0, ideal: Math.max(0.8, Math.min(3.0, ideal)) }
   } else {
-    // スロー: 0.3秒〜5秒
-    return { min: 0.3, max: 5.0 }
+    // スロー: 1.5秒〜5秒
+    const ideal = 4.5 - ((dynamism - 1) / 5) * 2.5  // 1→4秒, 6→2秒
+    return { min: 1.5, max: 5.0, ideal: Math.max(1.5, Math.min(5.0, ideal)) }
   }
 }
 
-// 躍動感スコアから理想的な表示時間を計算
-function getIdealDuration(dynamism: number): number {
-  if (dynamism >= 7) {
-    // dynamism 7 → 1.5秒, dynamism 10 → 0.5秒
-    return 3.0 - ((dynamism - 7) / 3) * 2.5
-  } else {
-    // dynamism 1 → 4秒, dynamism 6 → 1.5秒
-    return 5.0 - ((dynamism - 1) / 5) * 3.5
-  }
-}
-
-// 範囲内で最適なビートを選択
-function findBestBeatInRange(
+// 指定時間範囲内で最も近いstrongビートを探す
+function findNearestStrongBeat(
   beats: Array<{ time: number; strength: string }>,
-  currentTime: number,
-  minDuration: number,
-  maxDuration: number,
-  idealDuration: number,
-  endLimit: number
+  targetTime: number,
+  minTime: number,
+  maxTime: number
 ): number | null {
-  const minTime = currentTime + minDuration
-  const maxTime = Math.min(currentTime + maxDuration, endLimit)
-  const idealTime = currentTime + idealDuration
+  // 範囲内のstrongビートを取得
+  const strongBeatsInRange = beats.filter(
+    b => b.strength === 'strong' && b.time >= minTime && b.time <= maxTime
+  )
   
-  // 範囲内のビートを取得
+  if (strongBeatsInRange.length > 0) {
+    // targetTimeに最も近いstrongビートを返す
+    let nearest = strongBeatsInRange[0]
+    let minDiff = Math.abs(strongBeatsInRange[0].time - targetTime)
+    for (const beat of strongBeatsInRange) {
+      const diff = Math.abs(beat.time - targetTime)
+      if (diff < minDiff) {
+        minDiff = diff
+        nearest = beat
+      }
+    }
+    return nearest.time
+  }
+  
+  // strongビートがない場合は通常のビートを探す
   const beatsInRange = beats.filter(b => b.time >= minTime && b.time <= maxTime)
-  
-  if (beatsInRange.length === 0) {
-    // ビートがない場合は理想時間を返す（範囲内に収める）
-    return Math.min(Math.max(idealTime, minTime), maxTime)
-  }
-  
-  // strongビートを優先
-  const strongBeats = beatsInRange.filter(b => b.strength === 'strong')
-  const targetBeats = strongBeats.length > 0 ? strongBeats : beatsInRange
-  
-  // 理想時間に最も近いビートを選択
-  let bestBeat = targetBeats[0]
-  let minDiff = Math.abs(targetBeats[0].time - idealTime)
-  
-  for (const beat of targetBeats) {
-    const diff = Math.abs(beat.time - idealTime)
-    if (diff < minDiff) {
-      minDiff = diff
-      bestBeat = beat
-    }
-  }
-  
-  return bestBeat.time
-}
-
-// 画像の視覚的インパクトを計算
-function getVisualImpact(analysis: ImageAnalysis): number {
-  let impact = analysis.visualIntensity || 5
-  
-  // 表情がある場合はインパクト加算
-  if (analysis.facialExpression && analysis.facialExpression !== 'なし') {
-    if (['笑顔', '幸福', '情熱的'].includes(analysis.facialExpression)) {
-      impact += 2
-    } else if (['驚き', '真剣'].includes(analysis.facialExpression)) {
-      impact += 1
-    }
-  }
-  
-  return Math.min(10, impact)
-}
-
-// クライマックスポイントを取得
-function getClimaxPoints(audioAnalysis: AudioAnalysis, duration: number): number[] {
-  const climaxPoints: number[] = []
-  
-  // highlightsからdrop/climaxを取得
-  if (audioAnalysis.highlights) {
-    for (const h of audioAnalysis.highlights) {
-      if (h.type === 'drop' || h.type === 'climax') {
-        climaxPoints.push(h.time)
+  if (beatsInRange.length > 0) {
+    let nearest = beatsInRange[0]
+    let minDiff = Math.abs(beatsInRange[0].time - targetTime)
+    for (const beat of beatsInRange) {
+      const diff = Math.abs(beat.time - targetTime)
+      if (diff < minDiff) {
+        minDiff = diff
+        nearest = beat
       }
     }
+    return nearest.time
   }
   
-  // sectionsからchorusを取得
-  if (audioAnalysis.sections) {
-    for (const s of audioAnalysis.sections) {
-      if (s.type === 'chorus' || s.type === 'drop') {
-        climaxPoints.push(s.start)
-      }
-    }
-  }
-  
-  return Array.from(new Set(climaxPoints)).sort((a, b) => a - b)
+  return null
 }
 
 // 曲のムードに応じたトランジションを選択
 function selectTransition(
   audioMood: string,
   isClimax: boolean,
-  prevImageMood: string,
-  nextImageMood: string
+  dynamism: number
 ): { type: string; duration: number } {
-  // クライマックスではダイナミックな効果
   if (isClimax) {
     const dynamicTransitions = ['zoom', 'slide-left', 'slide-right']
     return {
@@ -175,11 +126,11 @@ function selectTransition(
     }
   }
   
-  // 曲のムードに応じたトランジション
-  if (['calm', 'melancholic', 'romantic', 'peaceful'].includes(audioMood)) {
-    return { type: 'fade', duration: 0.5 }
-  } else if (['energetic', 'upbeat', 'intense'].includes(audioMood)) {
+  // dynamismとムードに応じたトランジション
+  if (dynamism >= 7 || ['energetic', 'upbeat', 'intense'].includes(audioMood)) {
     return { type: 'cut', duration: 0 }
+  } else if (['calm', 'melancholic', 'romantic', 'peaceful'].includes(audioMood)) {
+    return { type: 'fade', duration: 0.4 }
   } else {
     return { type: 'dissolve', duration: 0.3 }
   }
@@ -188,38 +139,56 @@ function selectTransition(
 // モーションを選択
 function selectMotion(
   dynamism: number,
-  visualIntensity: number,
   motionSuggestion?: string
 ): { type: string; intensity: number } {
-  // 提案があればそれを使用
   if (motionSuggestion && motionSuggestion !== 'static') {
     return {
       type: motionSuggestion,
-      intensity: dynamism >= 7 ? 0.2 : 0.1
+      intensity: dynamism >= 7 ? 0.15 : 0.1
     }
   }
   
-  // dynamismに応じたモーション
+  const motions = ['zoom-in', 'zoom-out', 'pan-left', 'pan-right']
+  
   if (dynamism >= 7) {
-    // アップテンポ: 動きのあるモーション
-    const motions = ['zoom-in', 'zoom-out', 'pan-left', 'pan-right']
     return {
       type: motions[Math.floor(Math.random() * motions.length)],
-      intensity: 0.2
+      intensity: 0.15
     }
   } else if (dynamism >= 4) {
-    // 中程度: 緩やかなモーション
     return {
       type: Math.random() > 0.5 ? 'zoom-in' : 'zoom-out',
       intensity: 0.1
     }
   } else {
-    // スロー: 静止または最小限のモーション
     return {
-      type: Math.random() > 0.7 ? 'zoom-in' : 'static',
+      type: 'zoom-in',
       intensity: 0.05
     }
   }
+}
+
+// クライマックスポイントを取得
+function getClimaxPoints(audioAnalysis: AudioAnalysis, duration: number): number[] {
+  const climaxPoints: number[] = []
+  
+  if (audioAnalysis.highlights) {
+    for (const h of audioAnalysis.highlights) {
+      if ((h.type === 'drop' || h.type === 'climax') && h.time <= duration) {
+        climaxPoints.push(h.time)
+      }
+    }
+  }
+  
+  if (audioAnalysis.sections) {
+    for (const s of audioAnalysis.sections) {
+      if ((s.type === 'chorus' || s.type === 'drop') && s.start <= duration) {
+        climaxPoints.push(s.start)
+      }
+    }
+  }
+  
+  return Array.from(new Set(climaxPoints)).sort((a, b) => a - b)
 }
 
 export async function POST(request: NextRequest) {
@@ -239,141 +208,112 @@ export async function POST(request: NextRequest) {
     
     // クライマックスポイントを取得
     const climaxPoints = getClimaxPoints(audioAnalysis, duration)
-    console.log('Climax points:', climaxPoints)
-    
-    // 各画像の視覚的インパクトを計算
-    const visualImpacts = imageAnalyses.map(getVisualImpact)
-    
-    // インパクトの高い画像のインデックスを取得（クライマックス用）
-    const impactRanking = visualImpacts
-      .map((impact, index) => ({ impact, index }))
-      .sort((a, b) => b.impact - a.impact)
     
     // ビートリスト（時間順）
-    const allBeats = [...audioAnalysis.beats].sort((a, b) => a.time - b.time)
+    const allBeats = audioAnalysis.beats ? [...audioAnalysis.beats].sort((a, b) => a.time - b.time) : []
     
-    // 編集計画を生成
+    console.log('=== Plan Generation Start ===')
+    console.log('Duration:', duration, 'seconds')
+    console.log('Image count:', imageCount)
+    console.log('Beat count:', allBeats.length)
+    
+    // Step 1: 各画像のdynamismに基づく理想的な表示時間を計算
+    const imageRanges: { min: number; max: number; ideal: number; dynamism: number }[] = []
+    let totalIdealTime = 0
+    
+    for (let i = 0; i < imageCount; i++) {
+      const dynamism = imageAnalyses[i].dynamism || 5
+      const range = getDurationRange(dynamism)
+      imageRanges.push({ ...range, dynamism })
+      totalIdealTime += range.ideal
+    }
+    
+    console.log('Total ideal time:', totalIdealTime.toFixed(2), 'seconds')
+    console.log('Requested duration:', duration, 'seconds')
+    
+    // Step 2: スケーリング係数を計算（durationに合わせる）
+    const scale = duration / totalIdealTime
+    console.log('Scale factor:', scale.toFixed(3))
+    
+    // Step 3: 各画像に時間を割り当て
     let currentTime = 0
+    const allocatedDurations: number[] = []
+    
+    for (let i = 0; i < imageCount; i++) {
+      const { min, max, ideal } = imageRanges[i]
+      
+      // スケーリングした時間を計算（範囲内に制限）
+      let targetDuration = ideal * scale
+      targetDuration = Math.max(min, Math.min(max, targetDuration))
+      
+      allocatedDurations.push(targetDuration)
+    }
+    
+    // 合計を調整（丸め誤差を最後の画像で吸収）
+    const totalAllocated = allocatedDurations.reduce((sum, d) => sum + d, 0)
+    const adjustment = duration - totalAllocated
+    
+    // 調整を最後の画像に適用（範囲内で）
+    const lastIdx = imageCount - 1
+    const lastRange = imageRanges[lastIdx]
+    allocatedDurations[lastIdx] = Math.max(
+      lastRange.min, 
+      Math.min(lastRange.max, allocatedDurations[lastIdx] + adjustment)
+    )
+    
+    // Step 4: ビートに合わせて微調整しながらクリップを生成
+    currentTime = 0
     
     for (let i = 0; i < imageCount; i++) {
       const analysis = imageAnalyses[i]
-      const dynamism = analysis.dynamism || 5
-      const { min: minDuration, max: maxDuration } = getDurationRange(dynamism)
-      const idealDuration = getIdealDuration(dynamism)
+      const { min, max, dynamism } = imageRanges[i]
+      const targetDuration = allocatedDurations[i]
       
-      // 最後の画像の場合は残り時間を使用
+      let endTime = currentTime + targetDuration
+      
+      // ビートに合わせて微調整（±0.3秒以内）
+      if (allBeats.length > 0 && i < imageCount - 1) {
+        const minEndTime = Math.max(currentTime + min, endTime - 0.3)
+        const maxEndTime = Math.min(currentTime + max, endTime + 0.3, duration)
+        
+        const nearestBeat = findNearestStrongBeat(allBeats, endTime, minEndTime, maxEndTime)
+        if (nearestBeat !== null) {
+          endTime = nearestBeat
+        }
+      }
+      
+      // 最後の画像は正確にdurationで終了
       if (i === imageCount - 1) {
-        const endTime = duration
-        const actualDuration = endTime - currentTime
-        
-        // 範囲内に収まっているか確認
-        const clampedEndTime = Math.min(
-          currentTime + maxDuration,
-          endTime
-        )
-        
-        clips.push({
-          imageIndex: i,
-          startTime: Math.round(currentTime * 100) / 100,
-          endTime: Math.round(clampedEndTime * 100) / 100,
-          transition: selectTransition(
-            audioAnalysis.mood,
-            false,
-            i > 0 ? imageAnalyses[i - 1].mood : '',
-            analysis.mood
-          ),
-          motion: selectMotion(dynamism, visualImpacts[i], analysis.motionSuggestion)
-        })
-        break
+        endTime = duration
       }
       
-      // 範囲内で最適なビートを探す
-      const nextSwitchTime = findBestBeatInRange(
-        allBeats,
-        currentTime,
-        minDuration,
-        maxDuration,
-        idealDuration,
-        duration
-      )
-      
-      if (nextSwitchTime === null) {
-        // ビートが見つからない場合は理想時間を使用
-        const endTime = Math.min(currentTime + idealDuration, duration)
-        clips.push({
-          imageIndex: i,
-          startTime: Math.round(currentTime * 100) / 100,
-          endTime: Math.round(endTime * 100) / 100,
-          transition: selectTransition(
-            audioAnalysis.mood,
-            false,
-            i > 0 ? imageAnalyses[i - 1].mood : '',
-            analysis.mood
-          ),
-          motion: selectMotion(dynamism, visualImpacts[i], analysis.motionSuggestion)
-        })
-        currentTime = endTime
-        continue
+      // 範囲内に収める
+      const actualDuration = endTime - currentTime
+      if (actualDuration < min) {
+        endTime = currentTime + min
+      } else if (actualDuration > max && i < imageCount - 1) {
+        endTime = currentTime + max
       }
       
-      // クライマックスポイント付近かどうか確認
-      const isNearClimax = climaxPoints.some(cp => 
-        Math.abs(nextSwitchTime - cp) < 1.0
-      )
+      // クライマックス付近かチェック
+      const isNearClimax = climaxPoints.some(cp => Math.abs(currentTime - cp) < 1.0)
+      
+      const clipDuration = endTime - currentTime
+      const inRange = clipDuration >= min && clipDuration <= max
+      console.log(`Clip ${i}: ${currentTime.toFixed(2)}s - ${endTime.toFixed(2)}s (${clipDuration.toFixed(2)}s) | d=${dynamism} | range=${min}-${max}s | ${inRange ? '✓' : '⚠️'}`)
       
       clips.push({
         imageIndex: i,
         startTime: Math.round(currentTime * 100) / 100,
-        endTime: Math.round(nextSwitchTime * 100) / 100,
-        transition: selectTransition(
-          audioAnalysis.mood,
-          isNearClimax,
-          i > 0 ? imageAnalyses[i - 1].mood : '',
-          analysis.mood
-        ),
-        motion: selectMotion(dynamism, visualImpacts[i], analysis.motionSuggestion)
+        endTime: Math.round(endTime * 100) / 100,
+        transition: selectTransition(audioAnalysis.mood, isNearClimax, dynamism),
+        motion: selectMotion(dynamism, analysis.motionSuggestion)
       })
       
-      currentTime = nextSwitchTime
+      currentTime = endTime
     }
     
-    // クリップが足りない場合の調整
-    while (clips.length < imageCount) {
-      const lastClip = clips[clips.length - 1]
-      const remainingImages = imageCount - clips.length
-      const remainingTime = duration - lastClip.endTime
-      const avgTime = remainingTime / remainingImages
-      
-      for (let i = clips.length; i < imageCount; i++) {
-        const analysis = imageAnalyses[i]
-        const dynamism = analysis.dynamism || 5
-        const startTime = clips[clips.length - 1].endTime
-        const endTime = i === imageCount - 1 ? duration : startTime + avgTime
-        
-        clips.push({
-          imageIndex: i,
-          startTime: Math.round(startTime * 100) / 100,
-          endTime: Math.round(endTime * 100) / 100,
-          transition: selectTransition(audioAnalysis.mood, false, '', analysis.mood),
-          motion: selectMotion(dynamism, visualImpacts[i], analysis.motionSuggestion)
-        })
-      }
-    }
-    
-    // 最後のクリップのendTimeをdurationに合わせる
-    if (clips.length > 0) {
-      clips[clips.length - 1].endTime = duration
-    }
-    
-    // ログ出力
-    console.log('Generated clips:')
-    clips.forEach((clip, i) => {
-      const analysis = imageAnalyses[clip.imageIndex]
-      const dynamism = analysis.dynamism || 5
-      const clipDuration = clip.endTime - clip.startTime
-      const range = getDurationRange(dynamism)
-      console.log(`  Clip ${i}: ${clip.startTime.toFixed(2)}s - ${clip.endTime.toFixed(2)}s (${clipDuration.toFixed(2)}s) | dynamism=${dynamism} | range=${range.min}-${range.max}s | ${clipDuration >= range.min && clipDuration <= range.max ? '✓' : '⚠️'}`)
-    })
+    console.log('=== Plan Generation Complete ===')
 
     const editingPlan: EditingPlan = {
       clips,

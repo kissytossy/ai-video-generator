@@ -29,7 +29,13 @@ export default function VideoPreview({
   const [isPlaying, setIsPlaying] = useState(false)
   // currentTimeは0からdurationまでの相対時間
   const [currentTime, setCurrentTime] = useState(0)
+  const currentTimeRef = useRef(0)  // 最新のcurrentTimeを保持
   const [isReady, setIsReady] = useState(false)
+  
+  // currentTimeが変更されたらrefも更新
+  useEffect(() => {
+    currentTimeRef.current = currentTime
+  }, [currentTime])
 
   const duration = endTime - startTime
 
@@ -66,7 +72,16 @@ export default function VideoPreview({
     }
     
     init()
-  }, [images, editingPlan])
+  }, [images])
+  
+  // editingPlanが変更されたら再描画（トランジション変更時など）
+  useEffect(() => {
+    if (!rendererRef.current || !editingPlan || !isReady) return
+    
+    rendererRef.current.setEditingPlan(editingPlan)
+    // 現在の位置で再描画（refで最新値を取得）
+    rendererRef.current.renderFrame(currentTimeRef.current)
+  }, [editingPlan, isReady])
 
   // 再生/一時停止
   const togglePlay = useCallback(() => {
