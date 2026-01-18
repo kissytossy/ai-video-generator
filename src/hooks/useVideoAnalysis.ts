@@ -176,13 +176,14 @@ export function useVideoAnalysis() {
     return data.editingPlan
   }, [updateState])
 
-  // 全分析を実行
+  // 全分析を実行（事前分析結果をオプションで受け取る）
   const runFullAnalysis = useCallback(async (
     images: UploadedImage[],
     audio: UploadedAudio,
     startTime: number,
     endTime: number,
-    aspectRatio: string
+    aspectRatio: string,
+    preAnalyzedImages?: any[]  // AI自動モードで事前分析した結果
   ) => {
     updateState({
       isAnalyzing: true,
@@ -192,8 +193,16 @@ export function useVideoAnalysis() {
     })
 
     try {
-      // 1. 画像分析（簡易、高速）
-      const imageAnalyses = await analyzeImages(images)
+      let imageAnalyses: ImageAnalysis[]
+
+      // 事前分析結果がある場合はそれを使用（AI自動モード）
+      if (preAnalyzedImages && preAnalyzedImages.length === images.length) {
+        updateState({ currentStep: '事前分析結果を使用...', progress: 25 })
+        imageAnalyses = preAnalyzedImages as ImageAnalysis[]
+      } else {
+        // 1. 画像分析（簡易、高速）
+        imageAnalyses = await analyzeImages(images)
+      }
       updateState({ imageAnalyses, progress: 30 })
 
       // 2. 音源分析（Claude APIで詳細分析）

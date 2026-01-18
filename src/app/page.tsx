@@ -289,13 +289,14 @@ export default function Home() {
 
       setMusicGenerationStatus('動画を分析中...')
 
-      // ★重要: 計算されたdurationで分析を実行
+      // ★重要: 計算されたdurationとdynamism情報で分析を実行
       await runFullAnalysis(
         images,
         generatedAudio,
         0,
         actualEndTime,  // 曲全体ではなく、躍動感ベースの長さを使用
-        aspectRatio
+        aspectRatio,
+        imageAnalysisResults  // dynamism情報を含む画像分析結果を渡す
       )
 
     } catch (error) {

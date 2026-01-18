@@ -79,45 +79,54 @@ export function drawImageWithMotion(
       break
     }
     case 'pan-left': {
+      // パン量に合わせて拡大（黒い背景を防ぐ）
+      // 横構図でも対応できるよう大きめに拡大
       const scale = 1.3
       const centerX = canvasWidth / 2
       const centerY = canvasHeight / 2
       ctx.translate(centerX, centerY)
       ctx.scale(scale, scale)
       ctx.translate(-centerX, -centerY)
+      // 拡大後にパン（控えめに）
       const panX = canvasWidth * 0.1 * easedProgress
       ctx.translate(-panX, 0)
       break
     }
     case 'pan-right': {
+      // パン量に合わせて拡大（黒い背景を防ぐ）
       const scale = 1.3
       const centerX = canvasWidth / 2
       const centerY = canvasHeight / 2
       ctx.translate(centerX, centerY)
       ctx.scale(scale, scale)
       ctx.translate(-centerX, -centerY)
+      // 拡大後にパン（控えめに）
       const panX = canvasWidth * 0.1 * easedProgress
       ctx.translate(panX, 0)
       break
     }
     case 'pan-up': {
+      // パン量に合わせて拡大（黒い背景を防ぐ）
       const scale = 1.3
       const centerX = canvasWidth / 2
       const centerY = canvasHeight / 2
       ctx.translate(centerX, centerY)
       ctx.scale(scale, scale)
       ctx.translate(-centerX, -centerY)
+      // 拡大後にパン（控えめに）
       const panY = canvasHeight * 0.1 * easedProgress
       ctx.translate(0, -panY)
       break
     }
     case 'pan-down': {
+      // パン量に合わせて拡大（黒い背景を防ぐ）
       const scale = 1.3
       const centerX = canvasWidth / 2
       const centerY = canvasHeight / 2
       ctx.translate(centerX, centerY)
       ctx.scale(scale, scale)
       ctx.translate(-centerX, -centerY)
+      // 拡大後にパン（控えめに）
       const panY = canvasHeight * 0.1 * easedProgress
       ctx.translate(0, panY)
       break
@@ -129,7 +138,7 @@ export function drawImageWithMotion(
   ctx.restore()
 }
 
-// トランジション描画
+// トランジション描画（モーション付き）
 export function drawTransition(
   ctx: CanvasRenderingContext2D,
   imgFrom: HTMLImageElement | null,
@@ -138,140 +147,208 @@ export function drawTransition(
   canvasHeight: number,
   progress: number, // 0-1
   transitionType: string,
-  direction?: string
+  direction?: string,
+  // 新規追加: モーション情報
+  motionFrom?: { type: string; intensity: number },
+  motionTo?: { type: string; intensity: number },
+  clipProgressFrom?: number,  // 前のクリップの進行度（0-1、通常は1に近い）
+  clipProgressTo?: number     // 次のクリップの進行度（0-1、通常は0に近い）
 ) {
   ctx.save()
 
   // progressを0-1の範囲にクランプ
   const p = Math.max(0, Math.min(1, progress))
+  
+  // イージングを適用（滑らかな遷移）
+  const easedP = p < 0.5 ? 2 * p * p : -1 + (4 - 2 * p) * p
 
   switch (transitionType) {
     case 'fade':
+      // フェード - 前の画像がフェードアウトしながら次の画像がフェードイン
       if (imgFrom) {
-        ctx.globalAlpha = 1
-        drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
-        ctx.globalAlpha = p
-        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
+        ctx.globalAlpha = 1 - easedP
+        if (motionFrom && clipProgressFrom !== undefined) {
+          drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, clipProgressFrom, motionFrom, 'linear')
+        } else {
+          drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
+        }
+      }
+      ctx.globalAlpha = easedP
+      if (motionTo && clipProgressTo !== undefined) {
+        // 次の画像はトランジション開始時からモーションを始める
+        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, clipProgressTo, motionTo, 'linear')
       } else {
-        ctx.globalAlpha = p
         drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       }
       break
 
     case 'dissolve':
+      // ディゾルブ - クロスフェード（両方同時に変化）
       if (imgFrom) {
-        ctx.globalAlpha = 1 - p
-        drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
-        ctx.globalAlpha = p
-        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
+        ctx.globalAlpha = 1 - easedP
+        if (motionFrom && clipProgressFrom !== undefined) {
+          drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, clipProgressFrom, motionFrom, 'linear')
+        } else {
+          drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
+        }
+      }
+      ctx.globalAlpha = easedP
+      if (motionTo && clipProgressTo !== undefined) {
+        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, clipProgressTo, motionTo, 'linear')
       } else {
-        ctx.globalAlpha = p
         drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       }
       break
 
     case 'slide':
     case 'slide-left':
+      // スライド（左方向）- 画像を拡大して黒帯を防ぐ
       if (imgFrom) {
         ctx.save()
-        ctx.translate(-canvasWidth * p, 0)
-        drawImageCoverScaled(ctx, imgFrom, canvasWidth, canvasHeight, 1.1)
+        ctx.translate(-canvasWidth * easedP, 0)
+        if (motionFrom && clipProgressFrom !== undefined) {
+          drawImageWithMotionScaled(ctx, imgFrom, canvasWidth, canvasHeight, clipProgressFrom, motionFrom, 1.1)
+        } else {
+          drawImageCoverScaled(ctx, imgFrom, canvasWidth, canvasHeight, 1.1)
+        }
         ctx.restore()
-        
-        ctx.save()
-        ctx.translate(canvasWidth * (1 - p), 0)
-        drawImageCoverScaled(ctx, imgTo, canvasWidth, canvasHeight, 1.1)
-        ctx.restore()
-      } else {
-        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       }
+      ctx.save()
+      ctx.translate(canvasWidth * (1 - easedP), 0)
+      if (motionTo && clipProgressTo !== undefined) {
+        drawImageWithMotionScaled(ctx, imgTo, canvasWidth, canvasHeight, clipProgressTo, motionTo, 1.1)
+      } else {
+        drawImageCoverScaled(ctx, imgTo, canvasWidth, canvasHeight, 1.1)
+      }
+      ctx.restore()
       break
 
     case 'slide-right':
+      // スライド（右方向）
       if (imgFrom) {
         ctx.save()
-        ctx.translate(canvasWidth * p, 0)
-        drawImageCoverScaled(ctx, imgFrom, canvasWidth, canvasHeight, 1.1)
+        ctx.translate(canvasWidth * easedP, 0)
+        if (motionFrom && clipProgressFrom !== undefined) {
+          drawImageWithMotionScaled(ctx, imgFrom, canvasWidth, canvasHeight, clipProgressFrom, motionFrom, 1.1)
+        } else {
+          drawImageCoverScaled(ctx, imgFrom, canvasWidth, canvasHeight, 1.1)
+        }
         ctx.restore()
-        
-        ctx.save()
-        ctx.translate(-canvasWidth * (1 - p), 0)
-        drawImageCoverScaled(ctx, imgTo, canvasWidth, canvasHeight, 1.1)
-        ctx.restore()
-      } else {
-        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       }
+      ctx.save()
+      ctx.translate(-canvasWidth * (1 - easedP), 0)
+      if (motionTo && clipProgressTo !== undefined) {
+        drawImageWithMotionScaled(ctx, imgTo, canvasWidth, canvasHeight, clipProgressTo, motionTo, 1.1)
+      } else {
+        drawImageCoverScaled(ctx, imgTo, canvasWidth, canvasHeight, 1.1)
+      }
+      ctx.restore()
       break
 
     case 'slide-up':
+      // スライド（上方向）
       if (imgFrom) {
         ctx.save()
-        ctx.translate(0, -canvasHeight * p)
-        drawImageCoverScaled(ctx, imgFrom, canvasWidth, canvasHeight, 1.1)
+        ctx.translate(0, -canvasHeight * easedP)
+        if (motionFrom && clipProgressFrom !== undefined) {
+          drawImageWithMotionScaled(ctx, imgFrom, canvasWidth, canvasHeight, clipProgressFrom, motionFrom, 1.1)
+        } else {
+          drawImageCoverScaled(ctx, imgFrom, canvasWidth, canvasHeight, 1.1)
+        }
         ctx.restore()
-        
-        ctx.save()
-        ctx.translate(0, canvasHeight * (1 - p))
-        drawImageCoverScaled(ctx, imgTo, canvasWidth, canvasHeight, 1.1)
-        ctx.restore()
-      } else {
-        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       }
+      ctx.save()
+      ctx.translate(0, canvasHeight * (1 - easedP))
+      if (motionTo && clipProgressTo !== undefined) {
+        drawImageWithMotionScaled(ctx, imgTo, canvasWidth, canvasHeight, clipProgressTo, motionTo, 1.1)
+      } else {
+        drawImageCoverScaled(ctx, imgTo, canvasWidth, canvasHeight, 1.1)
+      }
+      ctx.restore()
       break
 
     case 'slide-down':
+      // スライド（下方向）
       if (imgFrom) {
         ctx.save()
-        ctx.translate(0, canvasHeight * p)
-        drawImageCoverScaled(ctx, imgFrom, canvasWidth, canvasHeight, 1.1)
+        ctx.translate(0, canvasHeight * easedP)
+        if (motionFrom && clipProgressFrom !== undefined) {
+          drawImageWithMotionScaled(ctx, imgFrom, canvasWidth, canvasHeight, clipProgressFrom, motionFrom, 1.1)
+        } else {
+          drawImageCoverScaled(ctx, imgFrom, canvasWidth, canvasHeight, 1.1)
+        }
         ctx.restore()
-        
-        ctx.save()
-        ctx.translate(0, -canvasHeight * (1 - p))
-        drawImageCoverScaled(ctx, imgTo, canvasWidth, canvasHeight, 1.1)
-        ctx.restore()
-      } else {
-        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       }
+      ctx.save()
+      ctx.translate(0, -canvasHeight * (1 - easedP))
+      if (motionTo && clipProgressTo !== undefined) {
+        drawImageWithMotionScaled(ctx, imgTo, canvasWidth, canvasHeight, clipProgressTo, motionTo, 1.1)
+      } else {
+        drawImageCoverScaled(ctx, imgTo, canvasWidth, canvasHeight, 1.1)
+      }
+      ctx.restore()
       break
 
     case 'wipe':
+      // ワイプ
       if (imgFrom) {
-        drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
+        if (motionFrom && clipProgressFrom !== undefined) {
+          drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, clipProgressFrom, motionFrom, 'linear')
+        } else {
+          drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
+        }
       }
       ctx.save()
       ctx.beginPath()
-      ctx.rect(0, 0, canvasWidth * p, canvasHeight)
+      ctx.rect(0, 0, canvasWidth * easedP, canvasHeight)
       ctx.clip()
-      drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
+      if (motionTo && clipProgressTo !== undefined) {
+        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, clipProgressTo, motionTo, 'linear')
+      } else {
+        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
+      }
       ctx.restore()
       break
 
     case 'zoom':
+      // ズームトランジション
       if (imgFrom) {
-        ctx.globalAlpha = 1 - p
-        const scaleFrom = 1 + p * 0.3
+        ctx.globalAlpha = 1 - easedP
+        const scaleFrom = 1 + easedP * 0.3
         ctx.save()
         ctx.translate(canvasWidth / 2, canvasHeight / 2)
         ctx.scale(scaleFrom, scaleFrom)
         ctx.translate(-canvasWidth / 2, -canvasHeight / 2)
-        drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
+        if (motionFrom && clipProgressFrom !== undefined) {
+          drawImageWithMotion(ctx, imgFrom, canvasWidth, canvasHeight, clipProgressFrom, motionFrom, 'linear')
+        } else {
+          drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
+        }
         ctx.restore()
       }
-      ctx.globalAlpha = p
-      const scaleTo = 1.3 - p * 0.3
+      ctx.globalAlpha = easedP
+      const scaleTo = 1.3 - easedP * 0.3
       ctx.save()
       ctx.translate(canvasWidth / 2, canvasHeight / 2)
       ctx.scale(scaleTo, scaleTo)
       ctx.translate(-canvasWidth / 2, -canvasHeight / 2)
-      drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
+      if (motionTo && clipProgressTo !== undefined) {
+        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, clipProgressTo, motionTo, 'linear')
+      } else {
+        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
+      }
       ctx.restore()
       break
 
     case 'none':
     case 'cut':
     default:
-      drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
+      // カット（即座に切り替え）- 次の画像はモーション付きで表示
+      if (motionTo && clipProgressTo !== undefined) {
+        drawImageWithMotion(ctx, imgTo, canvasWidth, canvasHeight, clipProgressTo, motionTo, 'ease-in-out')
+      } else {
+        drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
+      }
       break
   }
 
@@ -333,6 +410,78 @@ function drawImageCoverScaled(
   ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight)
 }
 
+// 画像をモーション付きで描画（スケール指定版 - スライドトランジション用）
+function drawImageWithMotionScaled(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  canvasWidth: number,
+  canvasHeight: number,
+  progress: number,
+  motion: { type: string; intensity: number },
+  baseScale: number
+) {
+  const clampedProgress = Math.max(0, Math.min(1, progress))
+  const easedProgress = clampedProgress < 0.5 
+    ? 2 * clampedProgress * clampedProgress 
+    : -1 + (4 - 2 * clampedProgress) * clampedProgress
+  const intensity = Math.max(0.05, Math.min(0.15, motion.intensity || 0.1))
+
+  const imgAspect = img.width / img.height
+  const canvasAspect = canvasWidth / canvasHeight
+
+  let drawWidth: number, drawHeight: number, offsetX: number, offsetY: number
+
+  if (imgAspect > canvasAspect) {
+    drawHeight = canvasHeight * baseScale
+    drawWidth = drawHeight * imgAspect
+    offsetX = (canvasWidth - drawWidth) / 2
+    offsetY = (canvasHeight - drawHeight) / 2
+  } else {
+    drawWidth = canvasWidth * baseScale
+    drawHeight = drawWidth / imgAspect
+    offsetX = (canvasWidth - drawWidth) / 2
+    offsetY = (canvasHeight - drawHeight) / 2
+  }
+
+  ctx.save()
+
+  // モーションエフェクトを適用
+  switch (motion.type) {
+    case 'zoom-in': {
+      const scale = 1 + intensity * easedProgress
+      const centerX = canvasWidth / 2
+      const centerY = canvasHeight / 2
+      ctx.translate(centerX, centerY)
+      ctx.scale(scale, scale)
+      ctx.translate(-centerX, -centerY)
+      break
+    }
+    case 'zoom-out': {
+      const scale = 1 + intensity * (1 - easedProgress)
+      const centerX = canvasWidth / 2
+      const centerY = canvasHeight / 2
+      ctx.translate(centerX, centerY)
+      ctx.scale(scale, scale)
+      ctx.translate(-centerX, -centerY)
+      break
+    }
+    case 'pan-left': {
+      const panX = canvasWidth * 0.05 * easedProgress
+      ctx.translate(-panX, 0)
+      break
+    }
+    case 'pan-right': {
+      const panX = canvasWidth * 0.05 * easedProgress
+      ctx.translate(panX, 0)
+      break
+    }
+    // static - 何もしない
+  }
+
+  ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight)
+  ctx.restore()
+}
+
 // 画像をロード
 export async function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -342,33 +491,6 @@ export async function loadImage(src: string): Promise<HTMLImageElement> {
     img.onerror = reject
     img.src = src
   })
-}
-
-// 画像を安全にロード（常にFileからDataURLを作成して確実に読み込む）
-async function loadImageSafe(uploadedImage: UploadedImage): Promise<HTMLImageElement> {
-  // 常にFileからDataURLを作成（Blob URLは時間経過で無効になる可能性があるため）
-  try {
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(reader.result as string)
-      reader.onerror = reject
-      reader.readAsDataURL(uploadedImage.file)
-    })
-    const img = await loadImage(dataUrl)
-    console.log(`Image loaded successfully: ${uploadedImage.name}`)
-    return img
-  } catch (e) {
-    console.error('Failed to load image from file:', e)
-    // フォールバック：preview（Blob URL）を試す
-    try {
-      console.log('Trying preview URL as fallback...')
-      const img = await loadImage(uploadedImage.preview)
-      return img
-    } catch (e2) {
-      console.error('Fallback also failed:', e2)
-      throw new Error(`画像の読み込みに失敗しました: ${uploadedImage.name}`)
-    }
-  }
 }
 
 // プレビュー用フレームレンダラー
@@ -388,7 +510,7 @@ export class PreviewRenderer {
 
   async setImages(uploadedImages: UploadedImage[]) {
     this.images = await Promise.all(
-      uploadedImages.map(img => loadImageSafe(img))
+      uploadedImages.map(img => loadImage(img.preview))
     )
   }
 
@@ -445,6 +567,10 @@ export class PreviewRenderer {
       const prevClip = clips[currentClipIndex - 1]
       const prevImage = this.images[prevClip?.imageIndex]
       
+      // 前のクリップの進行度（トランジション開始時点で1に近い、さらに進む）
+      const prevClipDuration = prevClip.endTime - prevClip.startTime
+      const prevClipProgress = 1 + (transitionProgress * transitionDuration / prevClipDuration)
+      
       drawTransition(
         this.ctx,
         prevImage || null,
@@ -452,7 +578,13 @@ export class PreviewRenderer {
         width,
         height,
         transitionProgress,
-        currentClip.transition.type
+        currentClip.transition.type,
+        undefined,
+        // モーション情報を追加
+        prevClip?.motion,
+        currentClip.motion,
+        Math.min(1, prevClipProgress),  // 前のクリップは終わりに近い
+        clipProgress  // 現在のクリップは始まりに近い
       )
     } else {
       // 通常描画（モーションエフェクト付き）
@@ -463,7 +595,7 @@ export class PreviewRenderer {
         height,
         clipProgress,
         currentClip.motion,
-        'ease-out'
+        'ease-in-out'
       )
     }
   }
@@ -514,7 +646,6 @@ export class VideoGenerator {
     const { width, height } = RESOLUTIONS[aspectRatio]
     const duration = endTime - startTime
     const totalFrames = Math.ceil(duration * fps)
-    const CHUNK_SIZE = 500 // 500フレームごとに中間動画を作成
 
     onProgress?.('画像を準備中...', 0)
 
@@ -524,139 +655,101 @@ export class VideoGenerator {
     canvas.height = height
     const ctx = canvas.getContext('2d')!
 
-    // 画像を安全にロード
+    // 画像をロード
     const loadedImages = await Promise.all(
-      images.map(img => loadImageSafe(img))
+      images.map(img => loadImage(img.preview))
     )
 
     onProgress?.('フレームを生成中...', 10)
 
-    const chunkVideos: string[] = []
-    let chunkIndex = 0
+    // フレームを生成してFFmpegに書き込み
+    for (let frame = 0; frame < totalFrames; frame++) {
+      // 編集計画は0秒から始まるので、フレーム位置のみで計算
+      const currentTime = frame / fps
+      
+      // フレームを描画
+      ctx.fillStyle = '#000'
+      ctx.fillRect(0, 0, width, height)
 
-    // チャンクごとに処理
-    for (let chunkStart = 0; chunkStart < totalFrames; chunkStart += CHUNK_SIZE) {
-      const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, totalFrames)
-      const chunkFrameCount = chunkEnd - chunkStart
+      const clips = editingPlan.clips
+      let currentClipIndex = clips.findIndex(
+        clip => currentTime >= clip.startTime && currentTime < clip.endTime
+      )
 
-      // このチャンクのフレームを生成
-      for (let frame = chunkStart; frame < chunkEnd; frame++) {
-        try {
-          const currentTime = frame / fps
-          
-          ctx.fillStyle = '#000'
-          ctx.fillRect(0, 0, width, height)
+      if (currentClipIndex === -1) {
+        currentClipIndex = clips.length - 1
+      }
 
-          const clips = editingPlan.clips
-          let currentClipIndex = clips.findIndex(
-            clip => currentTime >= clip.startTime && currentTime < clip.endTime
-          )
+      const currentClip = clips[currentClipIndex]
+      if (currentClip) {
+        const currentImage = loadedImages[currentClip.imageIndex]
+        if (currentImage) {
+          const clipDuration = currentClip.endTime - currentClip.startTime
+          const clipProgress = (currentTime - currentClip.startTime) / clipDuration
+          const transitionDuration = currentClip.transition.duration
+          const transitionProgress = transitionDuration > 0 
+            ? Math.min(1, (currentTime - currentClip.startTime) / transitionDuration)
+            : 1
 
-          if (currentClipIndex === -1) {
-            currentClipIndex = clips.length - 1
+          if (transitionProgress < 1 && currentClipIndex > 0) {
+            const prevClip = clips[currentClipIndex - 1]
+            const prevImage = loadedImages[prevClip?.imageIndex]
+            
+            // 前のクリップの進行度（トランジション開始時点で1に近い、さらに進む）
+            const prevClipDuration = prevClip.endTime - prevClip.startTime
+            const prevClipProgress = 1 + (transitionProgress * transitionDuration / prevClipDuration)
+            
+            drawTransition(
+              ctx,
+              prevImage || null,
+              currentImage,
+              width,
+              height,
+              transitionProgress,
+              currentClip.transition.type,
+              undefined,
+              // モーション情報を追加
+              prevClip?.motion,
+              currentClip.motion,
+              Math.min(1, prevClipProgress),  // 前のクリップは終わりに近い
+              clipProgress  // 現在のクリップは始まりに近い
+            )
+          } else {
+            drawImageWithMotion(
+              ctx,
+              currentImage,
+              width,
+              height,
+              clipProgress,
+              currentClip.motion,
+              'ease-in-out'
+            )
           }
-
-          const currentClip = clips[currentClipIndex]
-          if (currentClip) {
-            const currentImage = loadedImages[currentClip.imageIndex]
-            if (currentImage) {
-              const clipDuration = currentClip.endTime - currentClip.startTime
-              const clipProgress = (currentTime - currentClip.startTime) / clipDuration
-              const transitionDuration = currentClip.transition.duration
-              const transitionProgress = transitionDuration > 0 
-                ? Math.min(1, (currentTime - currentClip.startTime) / transitionDuration)
-                : 1
-
-              if (transitionProgress < 1 && currentClipIndex > 0) {
-                const prevClip = clips[currentClipIndex - 1]
-                const prevImage = loadedImages[prevClip?.imageIndex]
-                
-                drawTransition(
-                  ctx,
-                  prevImage || null,
-                  currentImage,
-                  width,
-                  height,
-                  transitionProgress,
-                  currentClip.transition.type
-                )
-              } else {
-                drawImageWithMotion(
-                  ctx,
-                  currentImage,
-                  width,
-                  height,
-                  clipProgress,
-                  currentClip.motion,
-                  'ease-out'
-                )
-              }
-            }
-          }
-
-          // フレームをJPEGとして保存（PNGより軽量）
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.9)
-          const base64Data = dataUrl.split(',')[1]
-          const binaryString = atob(base64Data)
-          const frameData = new Uint8Array(binaryString.length)
-          for (let i = 0; i < binaryString.length; i++) {
-            frameData[i] = binaryString.charCodeAt(i)
-          }
-          const localFrameIndex = frame - chunkStart
-          const frameName = `frame${String(localFrameIndex).padStart(6, '0')}.jpg`
-          await this.ffmpeg!.writeFile(frameName, frameData)
-
-        } catch (frameError) {
-          console.error(`Error at frame ${frame}:`, frameError)
-          throw new Error(`フレーム ${frame} の生成中にエラーが発生しました: ${frameError instanceof Error ? frameError.message : String(frameError)}`)
-        }
-
-        // 進捗報告
-        const overallProgress = 10 + (frame / totalFrames) * 50
-        if (frame % 100 === 0) {
-          onProgress?.(`フレーム生成中... ${frame}/${totalFrames}`, overallProgress)
         }
       }
 
-      // このチャンクを中間動画に変換
-      const chunkVideoName = `chunk_${chunkIndex}.mp4`
-      onProgress?.(`チャンク ${chunkIndex + 1} をエンコード中...`, 60 + (chunkIndex / Math.ceil(totalFrames / CHUNK_SIZE)) * 20)
+      // フレームをPNGとして保存
+      const blob = await new Promise<Blob>((resolve) => {
+        canvas.toBlob((b) => resolve(b!), 'image/png')
+      })
+      const frameData = new Uint8Array(await blob.arrayBuffer())
+      const frameName = `frame${String(frame).padStart(6, '0')}.png`
+      await this.ffmpeg!.writeFile(frameName, frameData)
 
-      await this.ffmpeg!.exec([
-        '-framerate', String(fps),
-        '-i', 'frame%06d.jpg',
-        '-c:v', 'libx264',
-        '-pix_fmt', 'yuv420p',
-        '-preset', 'ultrafast',
-        '-y',
-        chunkVideoName
-      ])
-
-      chunkVideos.push(chunkVideoName)
-
-      // このチャンクのフレームを削除してメモリを解放
-      for (let i = 0; i < chunkFrameCount; i++) {
-        const frameName = `frame${String(i).padStart(6, '0')}.jpg`
-        await this.ffmpeg!.deleteFile(frameName).catch(() => {})
+      // 進捗報告（10% - 70%）
+      const frameProgress = 10 + (frame / totalFrames) * 60
+      if (frame % Math.ceil(totalFrames / 20) === 0) {
+        onProgress?.(`フレーム生成中... ${frame}/${totalFrames}`, frameProgress)
       }
-
-      chunkIndex++
     }
 
-    onProgress?.('音源を準備中...', 80)
+    onProgress?.('音源を準備中...', 70)
 
     // 音源を書き込み
-    let audioData: Uint8Array
-    try {
-      const arrayBuffer = await audioFile.arrayBuffer()
-      audioData = new Uint8Array(arrayBuffer)
-    } catch (e) {
-      console.error('Failed to read audio file:', e)
-      throw new Error('音声ファイルの読み込みに失敗しました')
-    }
+    const audioData = await fetchFile(audioFile)
     await this.ffmpeg.writeFile('audio_full.mp3', audioData)
 
-    // 音源をトリミング
+    // 音源を指定範囲でトリミング
     await this.ffmpeg.exec([
       '-i', 'audio_full.mp3',
       '-ss', String(startTime),
@@ -666,46 +759,23 @@ export class VideoGenerator {
       'audio.mp3'
     ])
 
-    onProgress?.('動画を結合中...', 85)
+    onProgress?.('動画をエンコード中...', 75)
 
-    // チャンク動画を結合
-    if (chunkVideos.length === 1) {
-      // チャンクが1つだけの場合はそのまま使用
-      await this.ffmpeg.exec([
-        '-i', chunkVideos[0],
-        '-i', 'audio.mp3',
-        '-c:v', 'copy',
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-map', '0:v:0',
-        '-map', '1:a:0',
-        '-shortest',
-        '-y',
-        'output.mp4'
-      ])
-    } else {
-      // 複数チャンクを結合
-      const concatList = chunkVideos.map(v => `file '${v}'`).join('\n')
-      const encoder = new TextEncoder()
-      await this.ffmpeg.writeFile('concat.txt', encoder.encode(concatList))
-
-      await this.ffmpeg.exec([
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', 'concat.txt',
-        '-i', 'audio.mp3',
-        '-c:v', 'copy',
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-map', '0:v:0',
-        '-map', '1:a:0',
-        '-shortest',
-        '-y',
-        'output.mp4'
-      ])
-
-      await this.ffmpeg.deleteFile('concat.txt').catch(() => {})
-    }
+    // FFmpegで動画生成（トリミング済み音源を使用）
+    await this.ffmpeg.exec([
+      '-framerate', String(fps),
+      '-i', 'frame%06d.png',
+      '-i', 'audio.mp3',
+      '-c:v', 'libx264',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-map', '0:v:0',
+      '-map', '1:a:0',
+      '-shortest',
+      '-y',
+      'output.mp4'
+    ])
 
     onProgress?.('完了！', 100)
 
@@ -713,8 +783,9 @@ export class VideoGenerator {
     const data = await this.ffmpeg.readFile('output.mp4')
     
     // クリーンアップ
-    for (const chunkVideo of chunkVideos) {
-      await this.ffmpeg.deleteFile(chunkVideo).catch(() => {})
+    for (let frame = 0; frame < totalFrames; frame++) {
+      const frameName = `frame${String(frame).padStart(6, '0')}.png`
+      await this.ffmpeg.deleteFile(frameName).catch(() => {})
     }
     await this.ffmpeg.deleteFile('audio_full.mp3').catch(() => {})
     await this.ffmpeg.deleteFile('audio.mp3').catch(() => {})
@@ -723,17 +794,19 @@ export class VideoGenerator {
     // FileDataをBlobに変換
     let bytes: Uint8Array
     if (typeof data === 'string') {
+      // Base64文字列の場合
       const binaryString = atob(data)
       bytes = new Uint8Array(binaryString.length)
       for (let i = 0; i < binaryString.length; i++) {
         bytes[i] = binaryString.charCodeAt(i)
       }
     } else {
+      // Uint8Arrayの場合 - 新しいUint8Arrayにコピーして型を確定させる
       const srcArray = data as Uint8Array
       bytes = new Uint8Array(srcArray.length)
       bytes.set(srcArray)
     }
-    // @ts-ignore
+    // @ts-ignore - TypeScript 5.9の厳密な型チェックを回避
     return new Blob([bytes], { type: 'video/mp4' })
   }
 }

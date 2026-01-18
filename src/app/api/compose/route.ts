@@ -105,25 +105,37 @@ export async function POST(request: NextRequest) {
     } else {
       promptParts.push('instrumental background music, no vocals')
     }
-    
-    // 長さの指示を追加
-    promptParts.push(`approximately ${targetDuration} seconds long`)
 
     const musicPrompt = promptParts.join(', ')
     const style = `${genre || 'pop'}, ${mood || 'uplifting'}, ${tempo || 'medium'}`
 
+    // 時間指示をstyleに追加（V5はプロンプトで時間をコントロール可能）
+    let durationInstruction = ''
+    if (targetDuration <= 60) {
+      durationInstruction = `short-form performance, under 1 minute, ${Math.max(30, targetDuration - 15)} to ${targetDuration + 15} seconds`
+    } else if (targetDuration <= 120) {
+      const minMinutes = Math.floor((targetDuration - 15) / 60)
+      const maxMinutes = Math.ceil((targetDuration + 15) / 60)
+      durationInstruction = `short-form performance, ${minMinutes} to ${maxMinutes} minutes, around ${Math.round(targetDuration)} seconds`
+    } else if (targetDuration <= 180) {
+      durationInstruction = `medium-form performance, 2 to 3 minutes`
+    } else {
+      durationInstruction = `long-form performance, over 3 minutes, 3 to 4 minutes`
+    }
+    
+    // styleに時間指示を含める
+    const styleWithDuration = `${style}, ${durationInstruction}`
+
     console.log('Suno API request:', { 
       prompt: musicPrompt, 
-      style, 
+      style: styleWithDuration, 
       withLyrics, 
       targetDuration,
-      season,
-      occasion,
-      expression,
-      colorMood,
+      model: 'V5',
+      styleWeight: 0.85,
     })
 
-    // sunoapi.org API呼び出し
+    // sunoapi.org API呼び出し（V5モデル + styleWeight 0.85）
     const response = await fetch('https://api.sunoapi.org/api/v1/generate', {
       method: 'POST',
       headers: {
@@ -133,11 +145,11 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         customMode: true,
         instrumental: !withLyrics,
-        model: 'V4_5ALL',
+        model: 'V5',  // V5はプロンプトの反映度が高い
         prompt: musicPrompt,
-        style: style,
+        style: styleWithDuration,
         title: withLyrics ? 'AI Generated Song' : 'AI Generated BGM',
-        duration: targetDuration,  // 曲の長さを秒数で指定
+        styleWeight: 0.85,  // 時間指示をより反映させる
         callBackUrl: 'https://example.com/callback',
       }),
     })
