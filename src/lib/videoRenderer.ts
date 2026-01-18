@@ -514,6 +514,7 @@ export class VideoGenerator {
     const { width, height } = RESOLUTIONS[aspectRatio]
     const duration = endTime - startTime
     const totalFrames = Math.ceil(duration * fps)
+    const CHUNK_SIZE = 500 // 500フレームごとに中間動画を作成
 
     onProgress?.('画像を準備中...', 0)
 
@@ -523,106 +524,139 @@ export class VideoGenerator {
     canvas.height = height
     const ctx = canvas.getContext('2d')!
 
-    // 画像を安全にロード（Blob URLが失敗した場合はFileから再読み込み）
+    // 画像を安全にロード
     const loadedImages = await Promise.all(
       images.map(img => loadImageSafe(img))
     )
 
     onProgress?.('フレームを生成中...', 10)
 
-    // フレームを生成してFFmpegに書き込み
-    for (let frame = 0; frame < totalFrames; frame++) {
-      try {
-        // 編集計画は0秒から始まるので、フレーム位置のみで計算
-        const currentTime = frame / fps
-        
-        // フレームを描画
-        ctx.fillStyle = '#000'
-        ctx.fillRect(0, 0, width, height)
+    const chunkVideos: string[] = []
+    let chunkIndex = 0
 
-        const clips = editingPlan.clips
-        let currentClipIndex = clips.findIndex(
-          clip => currentTime >= clip.startTime && currentTime < clip.endTime
-        )
+    // チャンクごとに処理
+    for (let chunkStart = 0; chunkStart < totalFrames; chunkStart += CHUNK_SIZE) {
+      const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, totalFrames)
+      const chunkFrameCount = chunkEnd - chunkStart
 
-        if (currentClipIndex === -1) {
-          currentClipIndex = clips.length - 1
-        }
+      // このチャンクのフレームを生成
+      for (let frame = chunkStart; frame < chunkEnd; frame++) {
+        try {
+          const currentTime = frame / fps
+          
+          ctx.fillStyle = '#000'
+          ctx.fillRect(0, 0, width, height)
 
-        const currentClip = clips[currentClipIndex]
-        if (currentClip) {
-          const currentImage = loadedImages[currentClip.imageIndex]
-          if (currentImage) {
-            const clipDuration = currentClip.endTime - currentClip.startTime
-            const clipProgress = (currentTime - currentClip.startTime) / clipDuration
-            const transitionDuration = currentClip.transition.duration
-            const transitionProgress = transitionDuration > 0 
-              ? Math.min(1, (currentTime - currentClip.startTime) / transitionDuration)
-              : 1
+          const clips = editingPlan.clips
+          let currentClipIndex = clips.findIndex(
+            clip => currentTime >= clip.startTime && currentTime < clip.endTime
+          )
 
-            if (transitionProgress < 1 && currentClipIndex > 0) {
-              const prevClip = clips[currentClipIndex - 1]
-              const prevImage = loadedImages[prevClip?.imageIndex]
-              
-              drawTransition(
-                ctx,
-                prevImage || null,
-                currentImage,
-                width,
-                height,
-                transitionProgress,
-                currentClip.transition.type
-              )
-            } else {
-              drawImageWithMotion(
-                ctx,
-                currentImage,
-                width,
-                height,
-                clipProgress,
-                currentClip.motion,
-                'ease-out'
-              )
+          if (currentClipIndex === -1) {
+            currentClipIndex = clips.length - 1
+          }
+
+          const currentClip = clips[currentClipIndex]
+          if (currentClip) {
+            const currentImage = loadedImages[currentClip.imageIndex]
+            if (currentImage) {
+              const clipDuration = currentClip.endTime - currentClip.startTime
+              const clipProgress = (currentTime - currentClip.startTime) / clipDuration
+              const transitionDuration = currentClip.transition.duration
+              const transitionProgress = transitionDuration > 0 
+                ? Math.min(1, (currentTime - currentClip.startTime) / transitionDuration)
+                : 1
+
+              if (transitionProgress < 1 && currentClipIndex > 0) {
+                const prevClip = clips[currentClipIndex - 1]
+                const prevImage = loadedImages[prevClip?.imageIndex]
+                
+                drawTransition(
+                  ctx,
+                  prevImage || null,
+                  currentImage,
+                  width,
+                  height,
+                  transitionProgress,
+                  currentClip.transition.type
+                )
+              } else {
+                drawImageWithMotion(
+                  ctx,
+                  currentImage,
+                  width,
+                  height,
+                  clipProgress,
+                  currentClip.motion,
+                  'ease-out'
+                )
+              }
             }
           }
+
+          // フレームをJPEGとして保存（PNGより軽量）
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.9)
+          const base64Data = dataUrl.split(',')[1]
+          const binaryString = atob(base64Data)
+          const frameData = new Uint8Array(binaryString.length)
+          for (let i = 0; i < binaryString.length; i++) {
+            frameData[i] = binaryString.charCodeAt(i)
+          }
+          const localFrameIndex = frame - chunkStart
+          const frameName = `frame${String(localFrameIndex).padStart(6, '0')}.jpg`
+          await this.ffmpeg!.writeFile(frameName, frameData)
+
+        } catch (frameError) {
+          console.error(`Error at frame ${frame}:`, frameError)
+          throw new Error(`フレーム ${frame} の生成中にエラーが発生しました: ${frameError instanceof Error ? frameError.message : String(frameError)}`)
         }
 
-        // フレームをPNGとして保存（toDataURLを使用してメモリ問題を回避）
-        const dataUrl = canvas.toDataURL('image/png')
-        const base64Data = dataUrl.split(',')[1]
-        const binaryString = atob(base64Data)
-        const frameData = new Uint8Array(binaryString.length)
-        for (let i = 0; i < binaryString.length; i++) {
-          frameData[i] = binaryString.charCodeAt(i)
+        // 進捗報告
+        const overallProgress = 10 + (frame / totalFrames) * 50
+        if (frame % 100 === 0) {
+          onProgress?.(`フレーム生成中... ${frame}/${totalFrames}`, overallProgress)
         }
-        const frameName = `frame${String(frame).padStart(6, '0')}.png`
-        await this.ffmpeg!.writeFile(frameName, frameData)
-
-        // 進捗報告（10% - 70%）
-        const frameProgress = 10 + (frame / totalFrames) * 60
-        if (frame % Math.ceil(totalFrames / 20) === 0) {
-          onProgress?.(`フレーム生成中... ${frame}/${totalFrames}`, frameProgress)
-        }
-      } catch (frameError) {
-        console.error(`Error at frame ${frame}:`, frameError)
-        throw new Error(`フレーム ${frame} の生成中にエラーが発生しました: ${frameError instanceof Error ? frameError.message : String(frameError)}`)
       }
+
+      // このチャンクを中間動画に変換
+      const chunkVideoName = `chunk_${chunkIndex}.mp4`
+      onProgress?.(`チャンク ${chunkIndex + 1} をエンコード中...`, 60 + (chunkIndex / Math.ceil(totalFrames / CHUNK_SIZE)) * 20)
+
+      await this.ffmpeg!.exec([
+        '-framerate', String(fps),
+        '-i', 'frame%06d.jpg',
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-preset', 'ultrafast',
+        '-y',
+        chunkVideoName
+      ])
+
+      chunkVideos.push(chunkVideoName)
+
+      // このチャンクのフレームを削除してメモリを解放
+      for (let i = 0; i < chunkFrameCount; i++) {
+        const frameName = `frame${String(i).padStart(6, '0')}.jpg`
+        await this.ffmpeg!.deleteFile(frameName).catch(() => {})
+      }
+
+      chunkIndex++
     }
 
-    onProgress?.('音源を準備中...', 70)
+    onProgress?.('音源を準備中...', 80)
 
-    // 音源を書き込み（fetchFileを使わずに直接arrayBufferを取得）
+    // 音源を書き込み
     let audioData: Uint8Array
     try {
       const arrayBuffer = await audioFile.arrayBuffer()
       audioData = new Uint8Array(arrayBuffer)
     } catch (e) {
-      console.error('Failed to read audio file directly, this should not happen:', e)
+      console.error('Failed to read audio file:', e)
       throw new Error('音声ファイルの読み込みに失敗しました')
     }
     await this.ffmpeg.writeFile('audio_full.mp3', audioData)
 
-    // 音源を指定範囲でトリミング
+    // 音源をトリミング
     await this.ffmpeg.exec([
       '-i', 'audio_full.mp3',
       '-ss', String(startTime),
@@ -632,23 +666,46 @@ export class VideoGenerator {
       'audio.mp3'
     ])
 
-    onProgress?.('動画をエンコード中...', 75)
+    onProgress?.('動画を結合中...', 85)
 
-    // FFmpegで動画生成（トリミング済み音源を使用）
-    await this.ffmpeg.exec([
-      '-framerate', String(fps),
-      '-i', 'frame%06d.png',
-      '-i', 'audio.mp3',
-      '-c:v', 'libx264',
-      '-pix_fmt', 'yuv420p',
-      '-c:a', 'aac',
-      '-b:a', '192k',
-      '-map', '0:v:0',
-      '-map', '1:a:0',
-      '-shortest',
-      '-y',
-      'output.mp4'
-    ])
+    // チャンク動画を結合
+    if (chunkVideos.length === 1) {
+      // チャンクが1つだけの場合はそのまま使用
+      await this.ffmpeg.exec([
+        '-i', chunkVideos[0],
+        '-i', 'audio.mp3',
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-map', '0:v:0',
+        '-map', '1:a:0',
+        '-shortest',
+        '-y',
+        'output.mp4'
+      ])
+    } else {
+      // 複数チャンクを結合
+      const concatList = chunkVideos.map(v => `file '${v}'`).join('\n')
+      const encoder = new TextEncoder()
+      await this.ffmpeg.writeFile('concat.txt', encoder.encode(concatList))
+
+      await this.ffmpeg.exec([
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', 'concat.txt',
+        '-i', 'audio.mp3',
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-map', '0:v:0',
+        '-map', '1:a:0',
+        '-shortest',
+        '-y',
+        'output.mp4'
+      ])
+
+      await this.ffmpeg.deleteFile('concat.txt').catch(() => {})
+    }
 
     onProgress?.('完了！', 100)
 
@@ -656,9 +713,8 @@ export class VideoGenerator {
     const data = await this.ffmpeg.readFile('output.mp4')
     
     // クリーンアップ
-    for (let frame = 0; frame < totalFrames; frame++) {
-      const frameName = `frame${String(frame).padStart(6, '0')}.png`
-      await this.ffmpeg.deleteFile(frameName).catch(() => {})
+    for (const chunkVideo of chunkVideos) {
+      await this.ffmpeg.deleteFile(chunkVideo).catch(() => {})
     }
     await this.ffmpeg.deleteFile('audio_full.mp3').catch(() => {})
     await this.ffmpeg.deleteFile('audio.mp3').catch(() => {})
@@ -667,19 +723,17 @@ export class VideoGenerator {
     // FileDataをBlobに変換
     let bytes: Uint8Array
     if (typeof data === 'string') {
-      // Base64文字列の場合
       const binaryString = atob(data)
       bytes = new Uint8Array(binaryString.length)
       for (let i = 0; i < binaryString.length; i++) {
         bytes[i] = binaryString.charCodeAt(i)
       }
     } else {
-      // Uint8Arrayの場合 - 新しいUint8Arrayにコピーして型を確定させる
       const srcArray = data as Uint8Array
       bytes = new Uint8Array(srcArray.length)
       bytes.set(srcArray)
     }
-    // @ts-ignore - TypeScript 5.9の厳密な型チェックを回避
+    // @ts-ignore
     return new Blob([bytes], { type: 'video/mp4' })
   }
 }
