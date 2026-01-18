@@ -344,25 +344,28 @@ export async function loadImage(src: string): Promise<HTMLImageElement> {
   })
 }
 
-// 画像を安全にロード（Blob URLが失敗した場合はFileから再読み込み）
+// 画像を安全にロード（常にFileからDataURLを作成して確実に読み込む）
 async function loadImageSafe(uploadedImage: UploadedImage): Promise<HTMLImageElement> {
-  // まずpreview（Blob URL）を試す
+  // 常にFileからDataURLを作成（Blob URLは時間経過で無効になる可能性があるため）
   try {
-    const img = await loadImage(uploadedImage.preview)
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = reject
+      reader.readAsDataURL(uploadedImage.file)
+    })
+    const img = await loadImage(dataUrl)
+    console.log(`Image loaded successfully: ${uploadedImage.name}`)
     return img
   } catch (e) {
-    console.log('Blob URL failed, re-loading from file...', e)
-    // 失敗したらfileからDataURLを作成
+    console.error('Failed to load image from file:', e)
+    // フォールバック：preview（Blob URL）を試す
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(reader.result as string)
-        reader.onerror = reject
-        reader.readAsDataURL(uploadedImage.file)
-      })
-      return await loadImage(dataUrl)
+      console.log('Trying preview URL as fallback...')
+      const img = await loadImage(uploadedImage.preview)
+      return img
     } catch (e2) {
-      console.error('Failed to load image from file:', e2)
+      console.error('Fallback also failed:', e2)
       throw new Error(`画像の読み込みに失敗しました: ${uploadedImage.name}`)
     }
   }
@@ -529,72 +532,83 @@ export class VideoGenerator {
 
     // フレームを生成してFFmpegに書き込み
     for (let frame = 0; frame < totalFrames; frame++) {
-      // 編集計画は0秒から始まるので、フレーム位置のみで計算
-      const currentTime = frame / fps
-      
-      // フレームを描画
-      ctx.fillStyle = '#000'
-      ctx.fillRect(0, 0, width, height)
+      try {
+        // 編集計画は0秒から始まるので、フレーム位置のみで計算
+        const currentTime = frame / fps
+        
+        // フレームを描画
+        ctx.fillStyle = '#000'
+        ctx.fillRect(0, 0, width, height)
 
-      const clips = editingPlan.clips
-      let currentClipIndex = clips.findIndex(
-        clip => currentTime >= clip.startTime && currentTime < clip.endTime
-      )
+        const clips = editingPlan.clips
+        let currentClipIndex = clips.findIndex(
+          clip => currentTime >= clip.startTime && currentTime < clip.endTime
+        )
 
-      if (currentClipIndex === -1) {
-        currentClipIndex = clips.length - 1
-      }
+        if (currentClipIndex === -1) {
+          currentClipIndex = clips.length - 1
+        }
 
-      const currentClip = clips[currentClipIndex]
-      if (currentClip) {
-        const currentImage = loadedImages[currentClip.imageIndex]
-        if (currentImage) {
-          const clipDuration = currentClip.endTime - currentClip.startTime
-          const clipProgress = (currentTime - currentClip.startTime) / clipDuration
-          const transitionDuration = currentClip.transition.duration
-          const transitionProgress = transitionDuration > 0 
-            ? Math.min(1, (currentTime - currentClip.startTime) / transitionDuration)
-            : 1
+        const currentClip = clips[currentClipIndex]
+        if (currentClip) {
+          const currentImage = loadedImages[currentClip.imageIndex]
+          if (currentImage) {
+            const clipDuration = currentClip.endTime - currentClip.startTime
+            const clipProgress = (currentTime - currentClip.startTime) / clipDuration
+            const transitionDuration = currentClip.transition.duration
+            const transitionProgress = transitionDuration > 0 
+              ? Math.min(1, (currentTime - currentClip.startTime) / transitionDuration)
+              : 1
 
-          if (transitionProgress < 1 && currentClipIndex > 0) {
-            const prevClip = clips[currentClipIndex - 1]
-            const prevImage = loadedImages[prevClip?.imageIndex]
-            
-            drawTransition(
-              ctx,
-              prevImage || null,
-              currentImage,
-              width,
-              height,
-              transitionProgress,
-              currentClip.transition.type
-            )
-          } else {
-            drawImageWithMotion(
-              ctx,
-              currentImage,
-              width,
-              height,
-              clipProgress,
-              currentClip.motion,
-              'ease-out'
-            )
+            if (transitionProgress < 1 && currentClipIndex > 0) {
+              const prevClip = clips[currentClipIndex - 1]
+              const prevImage = loadedImages[prevClip?.imageIndex]
+              
+              drawTransition(
+                ctx,
+                prevImage || null,
+                currentImage,
+                width,
+                height,
+                transitionProgress,
+                currentClip.transition.type
+              )
+            } else {
+              drawImageWithMotion(
+                ctx,
+                currentImage,
+                width,
+                height,
+                clipProgress,
+                currentClip.motion,
+                'ease-out'
+              )
+            }
           }
         }
-      }
 
-      // フレームをPNGとして保存
-      const blob = await new Promise<Blob>((resolve) => {
-        canvas.toBlob((b) => resolve(b!), 'image/png')
-      })
-      const frameData = new Uint8Array(await blob.arrayBuffer())
-      const frameName = `frame${String(frame).padStart(6, '0')}.png`
-      await this.ffmpeg!.writeFile(frameName, frameData)
+        // フレームをPNGとして保存
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((b) => {
+            if (b) {
+              resolve(b)
+            } else {
+              reject(new Error(`Failed to create blob for frame ${frame}`))
+            }
+          }, 'image/png')
+        })
+        const frameData = new Uint8Array(await blob.arrayBuffer())
+        const frameName = `frame${String(frame).padStart(6, '0')}.png`
+        await this.ffmpeg!.writeFile(frameName, frameData)
 
-      // 進捗報告（10% - 70%）
-      const frameProgress = 10 + (frame / totalFrames) * 60
-      if (frame % Math.ceil(totalFrames / 20) === 0) {
-        onProgress?.(`フレーム生成中... ${frame}/${totalFrames}`, frameProgress)
+        // 進捗報告（10% - 70%）
+        const frameProgress = 10 + (frame / totalFrames) * 60
+        if (frame % Math.ceil(totalFrames / 20) === 0) {
+          onProgress?.(`フレーム生成中... ${frame}/${totalFrames}`, frameProgress)
+        }
+      } catch (frameError) {
+        console.error(`Error at frame ${frame}:`, frameError)
+        throw new Error(`フレーム ${frame} の生成中にエラーが発生しました: ${frameError instanceof Error ? frameError.message : String(frameError)}`)
       }
     }
 
