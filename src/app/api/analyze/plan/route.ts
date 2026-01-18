@@ -29,6 +29,13 @@ interface AudioAnalysis {
     reason: string
     intensity: number
     suggestedTransition: string
+    isRapid?: boolean
+  }>
+  rapidSections?: Array<{
+    start: number
+    end: number
+    reason: string
+    suggestedInterval: number
   }>
 }
 
@@ -257,9 +264,15 @@ function generateSimplePlan(
   
   // Claude APIで生成されたswitchPointsがあればそれを優先使用
   const aiSwitchPoints = audioAnalysis.switchPoints
+  const rapidSections = audioAnalysis.rapidSections || []
 
   const switchPoints = [0]
   const transitionMap: Map<number, string> = new Map()
+  
+  // rapidSections内かどうかをチェックするヘルパー
+  const isInRapidSection = (time: number): boolean => {
+    return rapidSections.some(rs => time >= rs.start && time <= rs.end)
+  }
 
   if (aiSwitchPoints && aiSwitchPoints.length >= imageCount - 1) {
     // Claude APIからのswitchPointsを使用
@@ -324,7 +337,9 @@ function generateSimplePlan(
       
       const endTime = Math.min(currentTime + clipDuration, duration)
       
-      const transition = transitionMap.get(i) || 'cut'
+      // rapidSection内ならcutを強制
+      const isRapid = isInRapidSection(currentTime)
+      const transition = isRapid ? 'cut' : (transitionMap.get(i) || 'cut')
       clips.push({
         imageIndex: i,
         startTime: Math.round(currentTime * 100) / 100,
@@ -346,7 +361,9 @@ function generateSimplePlan(
     const motions = ['zoom-in', 'zoom-out', 'pan-left', 'pan-right']
     
     for (let i = 0; i < imageCount; i++) {
-      const transition = transitionMap.get(i) || 'cut'
+      // rapidSection内ならcutを強制
+      const isRapid = isInRapidSection(switchPoints[i])
+      const transition = isRapid ? 'cut' : (transitionMap.get(i) || 'cut')
       clips.push({
         imageIndex: i,
         startTime: switchPoints[i],
