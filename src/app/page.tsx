@@ -84,7 +84,8 @@ export default function Home() {
     setMusicGenerationStatus('画像を分析中...')
 
     try {
-      const imagesToAnalyze = images.slice(0, Math.min(5, images.length))
+      // すべての画像を分析（最大20枚まで）
+      const imagesToAnalyze = images.slice(0, Math.min(20, images.length))
       const imageAnalysisResults = []
 
       for (let i = 0; i < imagesToAnalyze.length; i++) {
@@ -106,43 +107,102 @@ export default function Home() {
         }
       }
 
+      // 各画像の躍動感スコアを取得
+      const dynamismScores = imageAnalysisResults.map(a => a.dynamism || 5)
+      
+      // 各画像の表示時間を計算
+      const displayDurations = dynamismScores.map(d => calculateDisplayDuration(d).base)
+      
+      // 合計表示時間を計算
+      const totalDisplayTime = displayDurations.reduce((sum, d) => sum + d, 0)
+      
+      // 最低15秒は確保
+      const targetDuration = Math.max(15, totalDisplayTime)
+      
+      console.log('Dynamism analysis:', { 
+        dynamismScores, 
+        displayDurations, 
+        totalDisplayTime,
+        targetDuration,
+        imageCount: images.length
+      })
+
+      // 音楽生成用の情報を集約
       const musicGenres = imageAnalysisResults.map(a => a.musicGenre).filter(Boolean)
       const musicMoods = imageAnalysisResults.map(a => a.musicMood).filter(Boolean)
       const musicTempos = imageAnalysisResults.map(a => a.musicTempo).filter(Boolean)
       const atmospheres = imageAnalysisResults.map(a => a.atmosphere).filter(Boolean)
-      const dynamismScores = imageAnalysisResults.map(a => a.dynamism || 5).filter(Boolean)
+      const facialExpressions = imageAnalysisResults.map(a => a.facialExpression).filter(Boolean)
+      const clothings = imageAnalysisResults.map(a => a.clothing).filter(Boolean)
+      const seasons = imageAnalysisResults.map(a => a.season).filter(Boolean)
+      const occasions = imageAnalysisResults.map(a => a.occasion).filter(Boolean)
+      const emotionalImpacts = imageAnalysisResults.map(a => a.emotionalImpact).filter(Boolean)
+      const colorMoods = imageAnalysisResults.map(a => a.colorMood).filter(Boolean)
 
       const dominantGenre = getMostFrequent(musicGenres) || 'pop'
       const dominantMood = getMostFrequent(musicMoods) || 'uplifting'
       const dominantTempo = getMostFrequent(musicTempos) || 'medium'
-      
+      const dominantSeason = getMostFrequent(seasons.filter(s => s !== '不明'))
+      const dominantOccasion = getMostFrequent(occasions.filter(o => o !== '不明'))
+      const dominantExpression = getMostFrequent(facialExpressions.filter(f => f !== 'なし'))
+      const dominantClothing = getMostFrequent(clothings.filter(c => c !== 'なし'))
+      const dominantColorMood = getMostFrequent(colorMoods)
+
       // 平均躍動感スコアを計算
       const avgDynamism = dynamismScores.length > 0 
         ? dynamismScores.reduce((a, b) => a + b, 0) / dynamismScores.length 
         : 5
 
-      // 躍動感に基づいて表示時間を計算
-      const durationInfo = calculateDisplayDuration(avgDynamism)
-      console.log('Dynamism analysis:', { avgDynamism, durationInfo })
+      // 詳細なプロンプトを構築
+      const promptParts = [
+        `${dominantMood} ${dominantGenre} music`,
+        `${dominantTempo} tempo`,
+      ]
+      
+      if (atmospheres.length > 0) {
+        promptParts.push(atmospheres.slice(0, 3).join(', '))
+      }
+      
+      if (dominantSeason) {
+        promptParts.push(`${dominantSeason}の雰囲気`)
+      }
+      
+      if (dominantOccasion) {
+        promptParts.push(`${dominantOccasion}シーン`)
+      }
+      
+      if (dominantExpression) {
+        promptParts.push(`${dominantExpression}な表情`)
+      }
+      
+      if (dominantColorMood) {
+        promptParts.push(`${dominantColorMood}色調`)
+      }
+      
+      if (emotionalImpacts.length > 0) {
+        promptParts.push(emotionalImpacts[0])
+      }
 
-      // 曲の長さを計算（画像枚数 × 躍動感に基づく基本表示時間）
-      // 最低15秒は確保
-      const duration = Math.max(15, images.length * durationInfo.base)
+      const prompt = promptParts.join(', ')
+      console.log('Generated prompt:', prompt)
 
-      const prompt = `${dominantMood} ${dominantGenre} music, ${dominantTempo} tempo, ${atmospheres.join(', ')}`
-
-      setMusicGenerationStatus('AIが曲を作成中...')
+      setMusicGenerationStatus(`AIが曲を作成中... (目標: ${Math.round(targetDuration)}秒)`)
 
       const composeResponse = await fetch('/api/compose', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt,
-          duration,
+          duration: targetDuration,
           genre: dominantGenre,
           mood: dominantMood,
           tempo: dominantTempo,
-          withLyrics,  // 歌詞オプションを追加
+          withLyrics,
+          // 追加情報
+          season: dominantSeason,
+          occasion: dominantOccasion,
+          expression: dominantExpression,
+          colorMood: dominantColorMood,
         }),
       })
 
@@ -215,15 +275,26 @@ export default function Home() {
 
       setAudio(generatedAudio)
       setStartTime(0)
-      setEndTime(audioBuffer.duration)
+      
+      // ★重要: 曲全体ではなく、計算されたtargetDurationを使用
+      // ただし、曲が短い場合は曲の長さに合わせる
+      const actualEndTime = Math.min(targetDuration, audioBuffer.duration)
+      setEndTime(actualEndTime)
+      
+      console.log('Duration settings:', {
+        targetDuration,
+        actualAudioDuration: audioBuffer.duration,
+        actualEndTime,
+      })
 
       setMusicGenerationStatus('動画を分析中...')
 
+      // ★重要: 計算されたdurationで分析を実行
       await runFullAnalysis(
         images,
         generatedAudio,
         0,
-        audioBuffer.duration,
+        actualEndTime,  // 曲全体ではなく、躍動感ベースの長さを使用
         aspectRatio
       )
 
@@ -348,7 +419,12 @@ export default function Home() {
                   className="w-full"
                 />
                 <p className="text-sm text-gray-500 mt-2">
-                  長さ: {Math.floor(audio.duration / 60)}:{String(Math.floor(audio.duration % 60)).padStart(2, '0')}
+                  曲の長さ: {Math.floor(audio.duration / 60)}:{String(Math.floor(audio.duration % 60)).padStart(2, '0')}
+                  {endTime < audio.duration && (
+                    <span className="ml-2 text-primary-600">
+                      (使用: {Math.floor(endTime / 60)}:{String(Math.floor(endTime % 60)).padStart(2, '0')})
+                    </span>
+                  )}
                 </p>
               </div>
             )}
