@@ -466,7 +466,14 @@ export async function POST(request: NextRequest) {
         console.log(`Clip ${i}: ${currentTime.toFixed(2)}s - ${endTime.toFixed(2)}s (${clipDuration.toFixed(2)}s) | d=${dynamism} | range=${min.toFixed(1)}-${max}s | NO CANDIDATE`)
       }
       
-      const clipDuration = endTime - currentTime
+      let clipDuration = endTime - currentTime
+      
+      // 最小時間を保証（0.1秒未満の場合は0.1秒に調整）
+      if (clipDuration < 0.1) {
+        endTime = currentTime + 0.1
+        clipDuration = 0.1
+        console.log(`Clip ${i}: Adjusted to minimum 0.1s`)
+      }
       
       clips.push({
         imageIndex: i,
@@ -482,13 +489,16 @@ export async function POST(request: NextRequest) {
       const remainingImages = imageCount - i - 1
       const remainingTime = duration - currentTime
       if (remainingImages > 0 && remainingTime < remainingImages * 0.1) {
-        console.log(`Warning: Not enough time for remaining ${remainingImages} images`)
-        const avgTime = remainingTime / remainingImages
-        for (let j = i + 1; j < imageCount; j++) {
+        console.log(`Warning: Not enough time for remaining ${remainingImages} images (${remainingTime.toFixed(2)}s)`)
+        // 残りの画像を可能な限り配置（最小0.1秒保証）
+        const minClipTime = 0.1
+        for (let j = i + 1; j < imageCount && currentTime < duration - minClipTime; j++) {
           const jAnalysis = imageAnalyses[j]
           const jDynamism = jAnalysis.dynamism || 5
-          const jEndTime = j === imageCount - 1 ? duration : currentTime + avgTime
+          const jEndTime = Math.min(currentTime + minClipTime, duration)
           const jClipDuration = jEndTime - currentTime
+          
+          if (jClipDuration < 0.1) break  // これ以上配置できない
           
           clips.push({
             imageIndex: j,
@@ -504,16 +514,32 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    // 最後のクリップをdurationで終了
+    // 最後のクリップをdurationで終了（ただし0秒クリップは作らない）
     if (clips.length > 0) {
-      clips[clips.length - 1].endTime = Math.round(duration * 100) / 100
+      const lastClip = clips[clips.length - 1]
+      const newEndTime = Math.round(duration * 100) / 100
+      
+      // 最後のクリップが0.1秒未満にならないようにする
+      if (newEndTime - lastClip.startTime >= 0.1) {
+        lastClip.endTime = newEndTime
+      }
     }
     
+    // 0秒または負のクリップを最終フィルタリング
+    const validClips = clips.filter(clip => {
+      const dur = clip.endTime - clip.startTime
+      if (dur < 0.1) {
+        console.log(`Filtered out clip with duration ${dur.toFixed(3)}s`)
+        return false
+      }
+      return true
+    })
+    
     console.log('=== Plan Generation Complete ===')
-    console.log('Total clips:', clips.length)
+    console.log('Total clips:', validClips.length)
 
     const editingPlan: EditingPlan = {
-      clips,
+      clips: validClips,
       overallMood: audioAnalysis.mood || 'energetic',
       suggestedTitle: 'AI Generated Video',
     }
