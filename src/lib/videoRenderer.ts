@@ -587,17 +587,14 @@ export class VideoGenerator {
           }
         }
 
-        // フレームをPNGとして保存
-        const blob = await new Promise<Blob>((resolve, reject) => {
-          canvas.toBlob((b) => {
-            if (b) {
-              resolve(b)
-            } else {
-              reject(new Error(`Failed to create blob for frame ${frame}`))
-            }
-          }, 'image/png')
-        })
-        const frameData = new Uint8Array(await blob.arrayBuffer())
+        // フレームをPNGとして保存（toDataURLを使用してメモリ問題を回避）
+        const dataUrl = canvas.toDataURL('image/png')
+        const base64Data = dataUrl.split(',')[1]
+        const binaryString = atob(base64Data)
+        const frameData = new Uint8Array(binaryString.length)
+        for (let i = 0; i < binaryString.length; i++) {
+          frameData[i] = binaryString.charCodeAt(i)
+        }
         const frameName = `frame${String(frame).padStart(6, '0')}.png`
         await this.ffmpeg!.writeFile(frameName, frameData)
 
