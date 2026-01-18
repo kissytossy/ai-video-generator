@@ -79,54 +79,45 @@ export function drawImageWithMotion(
       break
     }
     case 'pan-left': {
-      // パン量に合わせて拡大（黒い背景を防ぐ）
-      // 横構図でも対応できるよう大きめに拡大
       const scale = 1.3
       const centerX = canvasWidth / 2
       const centerY = canvasHeight / 2
       ctx.translate(centerX, centerY)
       ctx.scale(scale, scale)
       ctx.translate(-centerX, -centerY)
-      // 拡大後にパン（控えめに）
       const panX = canvasWidth * 0.1 * easedProgress
       ctx.translate(-panX, 0)
       break
     }
     case 'pan-right': {
-      // パン量に合わせて拡大（黒い背景を防ぐ）
       const scale = 1.3
       const centerX = canvasWidth / 2
       const centerY = canvasHeight / 2
       ctx.translate(centerX, centerY)
       ctx.scale(scale, scale)
       ctx.translate(-centerX, -centerY)
-      // 拡大後にパン（控えめに）
       const panX = canvasWidth * 0.1 * easedProgress
       ctx.translate(panX, 0)
       break
     }
     case 'pan-up': {
-      // パン量に合わせて拡大（黒い背景を防ぐ）
       const scale = 1.3
       const centerX = canvasWidth / 2
       const centerY = canvasHeight / 2
       ctx.translate(centerX, centerY)
       ctx.scale(scale, scale)
       ctx.translate(-centerX, -centerY)
-      // 拡大後にパン（控えめに）
       const panY = canvasHeight * 0.1 * easedProgress
       ctx.translate(0, -panY)
       break
     }
     case 'pan-down': {
-      // パン量に合わせて拡大（黒い背景を防ぐ）
       const scale = 1.3
       const centerX = canvasWidth / 2
       const centerY = canvasHeight / 2
       ctx.translate(centerX, centerY)
       ctx.scale(scale, scale)
       ctx.translate(-centerX, -centerY)
-      // 拡大後にパン（控えめに）
       const panY = canvasHeight * 0.1 * easedProgress
       ctx.translate(0, panY)
       break
@@ -156,7 +147,6 @@ export function drawTransition(
 
   switch (transitionType) {
     case 'fade':
-      // フェード - 前の画像がフェードアウトしながら次の画像がフェードイン
       if (imgFrom) {
         ctx.globalAlpha = 1
         drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
@@ -169,7 +159,6 @@ export function drawTransition(
       break
 
     case 'dissolve':
-      // ディゾルブ - クロスフェード（両方同時に変化）
       if (imgFrom) {
         ctx.globalAlpha = 1 - p
         drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
@@ -183,7 +172,6 @@ export function drawTransition(
 
     case 'slide':
     case 'slide-left':
-      // スライド（左方向）- 画像を拡大して黒帯を防ぐ
       if (imgFrom) {
         ctx.save()
         ctx.translate(-canvasWidth * p, 0)
@@ -200,7 +188,6 @@ export function drawTransition(
       break
 
     case 'slide-right':
-      // スライド（右方向）
       if (imgFrom) {
         ctx.save()
         ctx.translate(canvasWidth * p, 0)
@@ -217,7 +204,6 @@ export function drawTransition(
       break
 
     case 'slide-up':
-      // スライド（上方向）
       if (imgFrom) {
         ctx.save()
         ctx.translate(0, -canvasHeight * p)
@@ -234,7 +220,6 @@ export function drawTransition(
       break
 
     case 'slide-down':
-      // スライド（下方向）
       if (imgFrom) {
         ctx.save()
         ctx.translate(0, canvasHeight * p)
@@ -251,7 +236,6 @@ export function drawTransition(
       break
 
     case 'wipe':
-      // ワイプ
       if (imgFrom) {
         drawImageCover(ctx, imgFrom, canvasWidth, canvasHeight)
       }
@@ -264,7 +248,6 @@ export function drawTransition(
       break
 
     case 'zoom':
-      // ズームトランジション
       if (imgFrom) {
         ctx.globalAlpha = 1 - p
         const scaleFrom = 1 + p * 0.3
@@ -288,7 +271,6 @@ export function drawTransition(
     case 'none':
     case 'cut':
     default:
-      // カット（即座に切り替え）/ エフェクトなし
       drawImageCover(ctx, imgTo, canvasWidth, canvasHeight)
       break
   }
@@ -362,6 +344,30 @@ export async function loadImage(src: string): Promise<HTMLImageElement> {
   })
 }
 
+// 画像を安全にロード（Blob URLが失敗した場合はFileから再読み込み）
+async function loadImageSafe(uploadedImage: UploadedImage): Promise<HTMLImageElement> {
+  // まずpreview（Blob URL）を試す
+  try {
+    const img = await loadImage(uploadedImage.preview)
+    return img
+  } catch (e) {
+    console.log('Blob URL failed, re-loading from file...', e)
+    // 失敗したらfileからDataURLを作成
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = reject
+        reader.readAsDataURL(uploadedImage.file)
+      })
+      return await loadImage(dataUrl)
+    } catch (e2) {
+      console.error('Failed to load image from file:', e2)
+      throw new Error(`画像の読み込みに失敗しました: ${uploadedImage.name}`)
+    }
+  }
+}
+
 // プレビュー用フレームレンダラー
 export class PreviewRenderer {
   private canvas: HTMLCanvasElement
@@ -379,7 +385,7 @@ export class PreviewRenderer {
 
   async setImages(uploadedImages: UploadedImage[]) {
     this.images = await Promise.all(
-      uploadedImages.map(img => loadImage(img.preview))
+      uploadedImages.map(img => loadImageSafe(img))
     )
   }
 
@@ -514,9 +520,9 @@ export class VideoGenerator {
     canvas.height = height
     const ctx = canvas.getContext('2d')!
 
-    // 画像をロード
+    // 画像を安全にロード（Blob URLが失敗した場合はFileから再読み込み）
     const loadedImages = await Promise.all(
-      images.map(img => loadImage(img.preview))
+      images.map(img => loadImageSafe(img))
     )
 
     onProgress?.('フレームを生成中...', 10)
@@ -594,8 +600,15 @@ export class VideoGenerator {
 
     onProgress?.('音源を準備中...', 70)
 
-    // 音源を書き込み
-    const audioData = await fetchFile(audioFile)
+    // 音源を書き込み（fetchFileを使わずに直接arrayBufferを取得）
+    let audioData: Uint8Array
+    try {
+      const arrayBuffer = await audioFile.arrayBuffer()
+      audioData = new Uint8Array(arrayBuffer)
+    } catch (e) {
+      console.error('Failed to read audio file directly, this should not happen:', e)
+      throw new Error('音声ファイルの読み込みに失敗しました')
+    }
     await this.ffmpeg.writeFile('audio_full.mp3', audioData)
 
     // 音源を指定範囲でトリミング
