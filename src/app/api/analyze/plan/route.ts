@@ -25,7 +25,20 @@ interface AudioAnalysis {
   beats: Array<{ time: number; strength: string }>
   sections: Array<{ start: number; end: number; type: string; energy: number }>
   highlights: Array<{ time: number; type: string; intensity: number }>
-  switchPoints?: Array<{ time: number; reason: string; intensity: number; suggestedTransition: string }>
+  // 音楽分析APIで生成された切り替えポイント（最重要！）
+  switchPoints?: Array<{ 
+    time: number
+    reason: string
+    intensity: number
+    suggestedTransition: string
+    isRapid?: boolean
+  }>
+  rapidSections?: Array<{
+    start: number
+    end: number
+    reason: string
+    suggestedInterval: number
+  }>
 }
 
 interface EditingPlanRequest {
@@ -55,277 +68,44 @@ interface EditingPlan {
   suggestedTitle: string
 }
 
-// 切り替え候補ポイント（優先度付き）
-interface SwitchCandidate {
-  time: number
-  priority: number  // 数字が大きいほど優先
-  type: string
-  reason: string
-  isRapidSequence?: boolean  // 連続ビートの一部かどうか
-}
-
 // 躍動感スコアから表示時間の範囲を計算
-// 音楽の状態（高エネルギー区間など）に応じて最小値を調整
-function getDurationRange(dynamism: number, isHighEnergy: boolean = false): { min: number; max: number } {
+function getDurationRange(dynamism: number): { min: number; max: number } {
   if (dynamism >= 7) {
-    // アップテンポ: 0.3〜3秒（高エネルギー時は0.1秒まで）
-    return { 
-      min: isHighEnergy ? 0.1 : 0.3, 
-      max: 3.0 
-    }
+    return { min: 0.3, max: 3.0 }
   } else {
-    // スロー: 0.3〜5秒（高エネルギー時は0.1秒まで）
-    return { 
-      min: isHighEnergy ? 0.1 : 0.3, 
-      max: 5.0 
-    }
+    return { min: 0.3, max: 5.0 }
   }
-}
-
-// 連続ビートパターンを検出
-function detectRapidBeatSequences(
-  beats: Array<{ time: number; strength: string }>,
-  duration: number
-): Array<{ start: number; end: number; interval: number; count: number }> {
-  const sequences: Array<{ start: number; end: number; interval: number; count: number }> = []
-  
-  if (!beats || beats.length < 3) return sequences
-  
-  // strongビートのみを抽出
-  const strongBeats = beats
-    .filter(b => b.strength === 'strong' && b.time <= duration)
-    .sort((a, b) => a.time - b.time)
-  
-  if (strongBeats.length < 3) return sequences
-  
-  // 連続する短い間隔（0.8秒以下）のビートを検出
-  let sequenceStart = 0
-  let sequenceCount = 1
-  let lastInterval = 0
-  
-  for (let i = 1; i < strongBeats.length; i++) {
-    const interval = strongBeats[i].time - strongBeats[i - 1].time
-    
-    // 短い間隔（0.1〜0.8秒）で一定のリズム
-    if (interval >= 0.1 && interval <= 0.8) {
-      if (sequenceCount === 1) {
-        sequenceStart = i - 1
-        lastInterval = interval
-        sequenceCount = 2
-      } else if (Math.abs(interval - lastInterval) < 0.15) {
-        // 前の間隔と近い場合は連続とみなす
-        sequenceCount++
-      } else {
-        // リズムが変わった - 前のシーケンスを保存
-        if (sequenceCount >= 3) {
-          sequences.push({
-            start: strongBeats[sequenceStart].time,
-            end: strongBeats[i - 1].time,
-            interval: lastInterval,
-            count: sequenceCount
-          })
-        }
-        sequenceStart = i - 1
-        lastInterval = interval
-        sequenceCount = 2
-      }
-    } else {
-      // 間隔が長い - シーケンス終了
-      if (sequenceCount >= 3) {
-        sequences.push({
-          start: strongBeats[sequenceStart].time,
-          end: strongBeats[i - 1].time,
-          interval: lastInterval,
-          count: sequenceCount
-        })
-      }
-      sequenceCount = 1
-    }
-  }
-  
-  // 最後のシーケンスを保存
-  if (sequenceCount >= 3) {
-    sequences.push({
-      start: strongBeats[sequenceStart].time,
-      end: strongBeats[strongBeats.length - 1].time,
-      interval: lastInterval,
-      count: sequenceCount
-    })
-  }
-  
-  return sequences
-}
-
-// ある時間が高エネルギー区間かどうかを判定
-function isHighEnergyZone(
-  time: number,
-  sections: Array<{ start: number; end: number; type: string; energy: number }>,
-  rapidSequences: Array<{ start: number; end: number; interval: number; count: number }>
-): boolean {
-  // 連続ビートシーケンス内
-  for (const seq of rapidSequences) {
-    if (time >= seq.start && time <= seq.end) {
-      return true
-    }
-  }
-  
-  // 高エネルギーセクション内
-  for (const section of sections) {
-    if (time >= section.start && time <= section.end) {
-      if (section.type === 'chorus' || section.type === 'drop' || section.energy >= 7) {
-        return true
-      }
-    }
-  }
-  
-  return false
-}
-
-// 音楽分析結果から全ての切り替え候補ポイントを抽出
-function extractSwitchCandidates(
-  audioAnalysis: AudioAnalysis, 
-  duration: number,
-  rapidSequences: Array<{ start: number; end: number; interval: number; count: number }>
-): SwitchCandidate[] {
-  const candidates: SwitchCandidate[] = []
-  
-  // 1. AI推奨ポイント（最高優先度）
-  if (audioAnalysis.switchPoints) {
-    for (const sp of audioAnalysis.switchPoints) {
-      if (sp.time <= duration && sp.time > 0) {
-        candidates.push({
-          time: sp.time,
-          priority: 100 + (sp.intensity || 5),
-          type: 'ai-recommended',
-          reason: sp.reason || 'AI推奨'
-        })
-      }
-    }
-  }
-  
-  // 2. セクション開始点
-  if (audioAnalysis.sections) {
-    for (const section of audioAnalysis.sections) {
-      if (section.start <= duration && section.start > 0) {
-        let priority = 50
-        if (section.type === 'chorus' || section.type === 'drop') {
-          priority = 90
-        } else if (section.type === 'bridge') {
-          priority = 70
-        } else if (section.type === 'verse') {
-          priority = 60
-        }
-        priority += (section.energy || 5)
-        
-        candidates.push({
-          time: section.start,
-          priority,
-          type: 'section-start',
-          reason: `${section.type}開始`
-        })
-      }
-    }
-  }
-  
-  // 3. ハイライト
-  if (audioAnalysis.highlights) {
-    for (const h of audioAnalysis.highlights) {
-      if (h.time <= duration && h.time > 0) {
-        let priority = 40
-        if (h.type === 'drop' || h.type === 'climax') {
-          priority = 85
-        } else if (h.type === 'build') {
-          priority = 65
-        }
-        priority += (h.intensity || 5)
-        
-        candidates.push({
-          time: h.time,
-          priority,
-          type: 'highlight',
-          reason: h.type
-        })
-      }
-    }
-  }
-  
-  // 4. ビート（連続シーケンス内のものは優先度を上げる）
-  if (audioAnalysis.beats) {
-    for (const beat of audioAnalysis.beats) {
-      if (beat.time <= duration && beat.time > 0) {
-        // 連続ビートシーケンス内かチェック
-        const isInRapidSequence = rapidSequences.some(
-          seq => beat.time >= seq.start && beat.time <= seq.end
-        )
-        
-        let priority = beat.strength === 'strong' ? 30 : 10
-        
-        // 連続ビートシーケンス内なら優先度を大幅に上げる
-        if (isInRapidSequence && beat.strength === 'strong') {
-          priority = 75  // サビ開始より少し低いが、かなり高い
-        }
-        
-        candidates.push({
-          time: beat.time,
-          priority,
-          type: 'beat',
-          reason: isInRapidSequence ? '連続ビート' : `${beat.strength}ビート`,
-          isRapidSequence: isInRapidSequence
-        })
-      }
-    }
-  }
-  
-  // 時間順にソート
-  candidates.sort((a, b) => a.time - b.time)
-  
-  return candidates
-}
-
-// 指定範囲内で最適な切り替えポイントを選択
-function findBestSwitchPoint(
-  candidates: SwitchCandidate[],
-  minTime: number,
-  maxTime: number
-): SwitchCandidate | null {
-  const inRange = candidates.filter(c => c.time >= minTime && c.time <= maxTime)
-  
-  if (inRange.length === 0) {
-    return null
-  }
-  
-  // 優先度が最も高いものを選択
-  let best = inRange[0]
-  for (const candidate of inRange) {
-    if (candidate.priority > best.priority) {
-      best = candidate
-    }
-  }
-  
-  return best
 }
 
 // トランジションを選択
 function selectTransition(
+  suggestedTransition: string | undefined,
+  isRapid: boolean,
   audioMood: string,
-  switchReason: string,
-  dynamism: number,
-  isRapidSwitch: boolean
+  dynamism: number
 ): { type: string; duration: number } {
-  // 連続ビートでの高速切り替えはカット
-  if (isRapidSwitch) {
+  // 高速切り替えはカット
+  if (isRapid) {
     return { type: 'cut', duration: 0 }
   }
   
-  // サビやドロップではダイナミックなトランジション
-  if (switchReason.includes('chorus') || switchReason.includes('drop') || switchReason.includes('climax')) {
-    const dynamicTransitions = ['zoom', 'slide-left', 'slide-right']
-    return {
-      type: dynamicTransitions[Math.floor(Math.random() * dynamicTransitions.length)],
-      duration: 0.15
+  // 音楽分析APIの提案があればそれを使用
+  if (suggestedTransition && suggestedTransition !== 'cut') {
+    const transitionDurations: { [key: string]: number } = {
+      'fade': 0.4,
+      'dissolve': 0.3,
+      'slide-left': 0.2,
+      'slide-right': 0.2,
+      'zoom': 0.15,
+      'wipe': 0.25,
+    }
+    return { 
+      type: suggestedTransition, 
+      duration: transitionDurations[suggestedTransition] || 0.2 
     }
   }
   
+  // フォールバック
   if (dynamism >= 7 || ['energetic', 'upbeat', 'intense'].includes(audioMood)) {
     return { type: 'cut', duration: 0 }
   } else if (['calm', 'melancholic', 'romantic', 'peaceful'].includes(audioMood)) {
@@ -341,7 +121,7 @@ function selectMotion(
   clipDuration: number,
   motionSuggestion?: string
 ): { type: string; intensity: number } {
-  // 非常に短いクリップ（0.5秒未満）は静止またはごく軽いズーム
+  // 非常に短いクリップ（0.5秒未満）は静止
   if (clipDuration < 0.5) {
     return { type: 'static', intensity: 0 }
   }
@@ -373,6 +153,80 @@ function selectMotion(
   }
 }
 
+// ビートからフォールバック用の切り替えポイントを生成
+function generateFallbackSwitchPoints(
+  beats: Array<{ time: number; strength: string }>,
+  imageCount: number,
+  duration: number
+): Array<{ time: number; reason: string; intensity: number; suggestedTransition: string; isRapid: boolean }> {
+  const switchPoints: Array<{ time: number; reason: string; intensity: number; suggestedTransition: string; isRapid: boolean }> = []
+  
+  const strongBeats = beats
+    .filter(b => b.strength === 'strong' && b.time > 0 && b.time < duration)
+    .sort((a, b) => a.time - b.time)
+  
+  if (strongBeats.length === 0) {
+    // ビートがない場合は均等分割
+    const interval = duration / imageCount
+    for (let i = 1; i < imageCount; i++) {
+      switchPoints.push({
+        time: interval * i,
+        reason: '均等分割',
+        intensity: 5,
+        suggestedTransition: 'cut',
+        isRapid: false
+      })
+    }
+    return switchPoints
+  }
+  
+  // 必要な切り替え数
+  const needed = imageCount - 1
+  const avgInterval = duration / imageCount
+  
+  // 強拍から適切な間隔で選択
+  let lastTime = 0
+  for (let i = 0; i < needed; i++) {
+    const targetTime = (i + 1) * avgInterval
+    
+    // targetTime付近の強拍を探す
+    let bestBeat = strongBeats.find(b => b.time > lastTime + 0.2)
+    let minDiff = Infinity
+    
+    for (const beat of strongBeats) {
+      if (beat.time <= lastTime + 0.2) continue
+      const diff = Math.abs(beat.time - targetTime)
+      if (diff < minDiff) {
+        minDiff = diff
+        bestBeat = beat
+      }
+    }
+    
+    if (bestBeat) {
+      switchPoints.push({
+        time: bestBeat.time,
+        reason: '強拍に合わせた切り替え',
+        intensity: 5,
+        suggestedTransition: 'cut',
+        isRapid: false
+      })
+      lastTime = bestBeat.time
+    } else {
+      // 強拍がない場合は目標時間を使用
+      switchPoints.push({
+        time: Math.min(targetTime, duration - 0.1),
+        reason: 'フォールバック',
+        intensity: 3,
+        suggestedTransition: 'cut',
+        isRapid: false
+      })
+      lastTime = targetTime
+    }
+  }
+  
+  return switchPoints
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body: EditingPlanRequest = await request.json()
@@ -394,138 +248,106 @@ export async function POST(request: NextRequest) {
     console.log('BPM:', audioAnalysis.bpm)
     console.log('Mood:', audioAnalysis.mood)
     
-    // Step 1: 連続ビートパターンを検出
-    const rapidSequences = detectRapidBeatSequences(audioAnalysis.beats || [], duration)
-    console.log('Rapid beat sequences:', rapidSequences.map(s => 
-      `${s.start.toFixed(2)}-${s.end.toFixed(2)}s (interval=${s.interval.toFixed(2)}s, count=${s.count})`
-    ))
+    // ★ 音楽分析APIで生成されたswitchPointsを優先使用
+    let switchPoints = audioAnalysis.switchPoints || []
     
-    // Step 2: 音楽分析から全ての切り替え候補を抽出
-    const switchCandidates = extractSwitchCandidates(audioAnalysis, duration, rapidSequences)
+    console.log('Original switchPoints from audio analysis:', switchPoints.length)
     
-    // 高優先度の候補をログ
-    const highPriorityCandidates = switchCandidates.filter(c => c.priority >= 50)
-    console.log('High priority candidates:', highPriorityCandidates.length)
+    // switchPointsが足りない場合はフォールバックで補完
+    if (switchPoints.length < imageCount - 1) {
+      console.log(`Not enough switchPoints (${switchPoints.length}), generating fallback...`)
+      switchPoints = generateFallbackSwitchPoints(
+        audioAnalysis.beats || [],
+        imageCount,
+        duration
+      )
+    }
     
-    // Step 3: セクション情報
-    const sections = audioAnalysis.sections || []
+    // switchPointsを時間順にソート
+    switchPoints = [...switchPoints].sort((a, b) => a.time - b.time)
     
-    // Step 4: 各画像に対して切り替えポイントを決定
+    // 最初のimageCount-1個のみを使用
+    switchPoints = switchPoints.slice(0, imageCount - 1)
+    
+    console.log('Using switchPoints:')
+    switchPoints.forEach((sp, i) => {
+      console.log(`  ${i}: ${sp.time.toFixed(2)}s - ${sp.reason} (intensity=${sp.intensity}, rapid=${sp.isRapid || false})`)
+    })
+    
+    // rapidSections情報
+    const rapidSections = audioAnalysis.rapidSections || []
+    console.log('Rapid sections:', rapidSections.map(rs => `${rs.start.toFixed(1)}-${rs.end.toFixed(1)}s`).join(', ') || 'none')
+    
+    // クリップを生成
     let currentTime = 0
     
     for (let i = 0; i < imageCount; i++) {
       const analysis = imageAnalyses[i]
       const dynamism = analysis.dynamism || 5
-      
-      // 現在地点が高エネルギー区間かどうか
-      const isHighEnergy = isHighEnergyZone(currentTime, sections, rapidSequences)
-      const { min, max } = getDurationRange(dynamism, isHighEnergy)
-      
-      // 最後の画像
-      if (i === imageCount - 1) {
-        const remainingTime = duration - currentTime
-        const clampedDuration = Math.max(min, Math.min(max, remainingTime))
-        const endTime = currentTime + clampedDuration
-        
-        console.log(`Clip ${i}: ${currentTime.toFixed(2)}s - ${endTime.toFixed(2)}s (${clampedDuration.toFixed(2)}s) | d=${dynamism} | LAST`)
-        
-        clips.push({
-          imageIndex: i,
-          startTime: Math.round(currentTime * 100) / 100,
-          endTime: Math.round(endTime * 100) / 100,
-          transition: selectTransition(audioAnalysis.mood, 'last', dynamism, false),
-          motion: selectMotion(dynamism, clampedDuration, analysis.motionSuggestion)
-        })
-        break
-      }
-      
-      // 切り替え候補を探す範囲
-      const minEndTime = currentTime + min
-      const maxEndTime = Math.min(currentTime + max, duration - 0.1)
-      
-      // 範囲内で最適な切り替えポイントを選択
-      const bestSwitch = findBestSwitchPoint(switchCandidates, minEndTime, maxEndTime)
+      const { min, max } = getDurationRange(dynamism)
       
       let endTime: number
-      let switchReason: string
-      let isRapidSwitch = false
+      let switchPoint: typeof switchPoints[0] | undefined
+      let clipDuration: number
       
-      if (bestSwitch) {
-        endTime = bestSwitch.time
-        switchReason = bestSwitch.reason
-        isRapidSwitch = bestSwitch.isRapidSequence || false
+      if (i < switchPoints.length) {
+        // switchPointがある場合はそれを使用
+        switchPoint = switchPoints[i]
+        endTime = switchPoint.time
         
-        const clipDuration = endTime - currentTime
-        console.log(`Clip ${i}: ${currentTime.toFixed(2)}s - ${endTime.toFixed(2)}s (${clipDuration.toFixed(2)}s) | d=${dynamism} | range=${min.toFixed(1)}-${max}s | ${switchReason} (p=${bestSwitch.priority})${isRapidSwitch ? ' [RAPID]' : ''}`)
+        // dynamism範囲を大幅に逸脱する場合のみ調整
+        clipDuration = endTime - currentTime
+        
+        if (clipDuration < 0.1) {
+          // 最小0.1秒を保証
+          endTime = currentTime + 0.1
+          clipDuration = 0.1
+          console.log(`Clip ${i}: Adjusted from ${switchPoint.time.toFixed(2)}s to ${endTime.toFixed(2)}s (min 0.1s)`)
+        } else if (clipDuration > max + 1.0) {
+          // 範囲を大幅に超える場合のみ調整（1秒の余裕）
+          endTime = currentTime + max
+          clipDuration = max
+          console.log(`Clip ${i}: Adjusted from ${switchPoint.time.toFixed(2)}s to ${endTime.toFixed(2)}s (max exceeded)`)
+        }
+        
+        console.log(`Clip ${i}: ${currentTime.toFixed(2)}s - ${endTime.toFixed(2)}s (${clipDuration.toFixed(2)}s) | d=${dynamism} | ${switchPoint.reason}${switchPoint.isRapid ? ' [RAPID]' : ''}`)
       } else {
-        // 候補がない場合は範囲の中間点を使用
-        endTime = Math.min(currentTime + (min + max) / 2, duration)
-        switchReason = 'fallback'
+        // 最後の画像
+        endTime = duration
+        clipDuration = endTime - currentTime
         
-        const clipDuration = endTime - currentTime
-        console.log(`Clip ${i}: ${currentTime.toFixed(2)}s - ${endTime.toFixed(2)}s (${clipDuration.toFixed(2)}s) | d=${dynamism} | range=${min.toFixed(1)}-${max}s | NO CANDIDATE`)
+        // 最小時間を保証
+        if (clipDuration < 0.1) {
+          console.log(`Clip ${i}: LAST - duration too short (${clipDuration.toFixed(3)}s), skipping`)
+          continue
+        }
+        
+        console.log(`Clip ${i}: ${currentTime.toFixed(2)}s - ${endTime.toFixed(2)}s (${clipDuration.toFixed(2)}s) | d=${dynamism} | LAST`)
       }
       
-      let clipDuration = endTime - currentTime
-      
-      // 最小時間を保証（0.1秒未満の場合は0.1秒に調整）
-      if (clipDuration < 0.1) {
-        endTime = currentTime + 0.1
-        clipDuration = 0.1
-        console.log(`Clip ${i}: Adjusted to minimum 0.1s`)
-      }
+      // 現在時間がrapidSection内かチェック
+      const isInRapidSection = rapidSections.some(
+        rs => currentTime >= rs.start && currentTime <= rs.end
+      )
+      const isRapid = switchPoint?.isRapid || isInRapidSection
       
       clips.push({
         imageIndex: i,
         startTime: Math.round(currentTime * 100) / 100,
         endTime: Math.round(endTime * 100) / 100,
-        transition: selectTransition(audioAnalysis.mood, switchReason, dynamism, isRapidSwitch),
+        transition: selectTransition(
+          switchPoint?.suggestedTransition,
+          isRapid,
+          audioAnalysis.mood,
+          dynamism
+        ),
         motion: selectMotion(dynamism, clipDuration, analysis.motionSuggestion)
       })
       
       currentTime = endTime
-      
-      // 残り時間チェック
-      const remainingImages = imageCount - i - 1
-      const remainingTime = duration - currentTime
-      if (remainingImages > 0 && remainingTime < remainingImages * 0.1) {
-        console.log(`Warning: Not enough time for remaining ${remainingImages} images (${remainingTime.toFixed(2)}s)`)
-        // 残りの画像を可能な限り配置（最小0.1秒保証）
-        const minClipTime = 0.1
-        for (let j = i + 1; j < imageCount && currentTime < duration - minClipTime; j++) {
-          const jAnalysis = imageAnalyses[j]
-          const jDynamism = jAnalysis.dynamism || 5
-          const jEndTime = Math.min(currentTime + minClipTime, duration)
-          const jClipDuration = jEndTime - currentTime
-          
-          if (jClipDuration < 0.1) break  // これ以上配置できない
-          
-          clips.push({
-            imageIndex: j,
-            startTime: Math.round(currentTime * 100) / 100,
-            endTime: Math.round(jEndTime * 100) / 100,
-            transition: { type: 'cut', duration: 0 },
-            motion: selectMotion(jDynamism, jClipDuration, jAnalysis.motionSuggestion)
-          })
-          
-          currentTime = jEndTime
-        }
-        break
-      }
     }
     
-    // 最後のクリップをdurationで終了（ただし0秒クリップは作らない）
-    if (clips.length > 0) {
-      const lastClip = clips[clips.length - 1]
-      const newEndTime = Math.round(duration * 100) / 100
-      
-      // 最後のクリップが0.1秒未満にならないようにする
-      if (newEndTime - lastClip.startTime >= 0.1) {
-        lastClip.endTime = newEndTime
-      }
-    }
-    
-    // 0秒または負のクリップを最終フィルタリング
+    // 0秒クリップをフィルタリング
     const validClips = clips.filter(clip => {
       const dur = clip.endTime - clip.startTime
       if (dur < 0.1) {
@@ -535,8 +357,17 @@ export async function POST(request: NextRequest) {
       return true
     })
     
+    // 最後のクリップを正確にdurationで終了
+    if (validClips.length > 0) {
+      validClips[validClips.length - 1].endTime = Math.round(duration * 100) / 100
+    }
+    
     console.log('=== Plan Generation Complete ===')
     console.log('Total clips:', validClips.length)
+    
+    // クリップの長さの分布をログ
+    const durations = validClips.map(c => c.endTime - c.startTime)
+    console.log('Clip durations:', durations.map(d => d.toFixed(2)).join(', '))
 
     const editingPlan: EditingPlan = {
       clips: validClips,
